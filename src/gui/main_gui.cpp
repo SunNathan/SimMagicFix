@@ -53,6 +53,8 @@ enum ControlId {
     IDC_TEST_ABS,
     IDC_TEST_MAP,
     IDC_TEST_SOC,
+    IDC_TEST_FARB,
+    IDC_TEST_RARB,
     IDC_TEST_DEMO,
     IDC_TEST_CLOSE,
 };
@@ -377,6 +379,12 @@ void update_test_window() {
     set_text(GetDlgItem(g_app.test, IDC_TEST_SOC),
              "SoC       " + std::to_string(static_cast<int>(snapshot.soc_percent())) +
                  " %");
+    set_text(GetDlgItem(g_app.test, IDC_TEST_FARB),
+             "ARB avant " + std::to_string(snapshot.front_arb) + " / " +
+                 std::to_string(snapshot.front_arb_max));
+    set_text(GetDlgItem(g_app.test, IDC_TEST_RARB),
+             "ARB arriere " + std::to_string(snapshot.rear_arb) + " / " +
+                 std::to_string(snapshot.rear_arb_max));
 }
 
 void show_test() {
@@ -401,11 +409,13 @@ LRESULT CALLBACK test_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                 int y;
             } labels[] = {
                 {IDC_TEST_SOURCE, L"Source : -", 50},
-                {IDC_TEST_TC, L"TC -", 85},
-                {IDC_TEST_TCCUT, L"TC Cut -", 115},
-                {IDC_TEST_ABS, L"ABS -", 145},
-                {IDC_TEST_MAP, L"MAP -", 175},
-                {IDC_TEST_SOC, L"SoC -", 205},
+                {IDC_TEST_TC, L"TC -", 78},
+                {IDC_TEST_TCCUT, L"TC Cut -", 103},
+                {IDC_TEST_ABS, L"ABS -", 128},
+                {IDC_TEST_MAP, L"MAP -", 153},
+                {IDC_TEST_SOC, L"SoC -", 178},
+                {IDC_TEST_FARB, L"ARB avant -", 203},
+                {IDC_TEST_RARB, L"ARB arriere -", 228},
             };
             for (const auto& label : labels) {
                 HWND control = CreateWindowExW(
@@ -417,12 +427,12 @@ LRESULT CALLBACK test_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             }
             HWND demo = CreateWindowExW(
                 0, L"BUTTON", L"Mode demo", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                20, 240, 160, 24, hwnd, reinterpret_cast<HMENU>(IDC_TEST_DEMO),
+                20, 266, 160, 24, hwnd, reinterpret_cast<HMENU>(IDC_TEST_DEMO),
                 g_app.instance, nullptr);
             set_font(demo, g_app.font);
             HWND close = CreateWindowExW(
                 0, L"BUTTON", L"Fermer", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 300,
-                240, 100, 28, hwnd, reinterpret_cast<HMENU>(IDC_TEST_CLOSE),
+                266, 100, 28, hwnd, reinterpret_cast<HMENU>(IDC_TEST_CLOSE),
                 g_app.instance, nullptr);
             set_font(close, g_app.font);
             SetTimer(hwnd, 1, 100, nullptr);
@@ -922,7 +932,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     CreateWindowExW(WS_EX_TOOLWINDOW, kTestClass, L"SimagicFix - test",
                     WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT,
-                    CW_USEDEFAULT, 560, 330, main_window, nullptr, instance, nullptr);
+                    CW_USEDEFAULT, 560, 380, main_window, nullptr, instance, nullptr);
 
     if (g_app.installed && g_app.tray_only) {
         ShowWindow(main_window, SW_HIDE);

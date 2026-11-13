@@ -77,7 +77,7 @@ Le JSON doit indiquer `"lmu_available": true` et les valeurs courantes.
 
 - Ouvrir SimPro Manager.
 - Activer **« Patch memoire SimPro (experimental) »** dans SimagicFix.
-- Vérifier que TC / TC Cut / MAP / SoC changent quand on agit dans le MFD.
+- Vérifier que TC / TC Cut / MAP / SoC / ARB avant / ARB arrière changent quand on agit dans le MFD.
 
 Si le volant affiche 0 :
 

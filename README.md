@@ -4,7 +4,7 @@
 
 Correctif local pour la télémétrie **Le Mans Ultimate** sur **SimPro Manager 2.x** (bases Alpha) avec volant **Simagic FX Pro**.
 
-Le rendu natif du volant SimPro ne lit ni les fichiers `.dash` ni le RPC JSON : il utilise un buffer `game_data` interne. SimagicFix lit les valeurs **TC**, **TC Cut**, **ABS**, **Motor Map** et **SoC** dans `LMU_Data`, puis les écrit directement dans ce buffer mémoire. Aucun fichier de dashboard n'est modifié.
+Le rendu natif du volant SimPro ne lit ni les fichiers `.dash` ni le RPC JSON : il utilise un buffer `game_data` interne. SimagicFix lit les valeurs **TC**, **TC Cut**, **ABS**, **Motor Map**, **SoC** et **ARB avant/arrière** dans `LMU_Data`, puis les écrit directement dans ce buffer mémoire. Aucun fichier de dashboard n'est modifié.
 
 ## Pourquoi ce correctif
 
@@ -17,7 +17,7 @@ SimagicFix fait le pont entre `LMU_Data` et le buffer `game_data` de SimPro, san
 ## Fonctionnalités
 
 - Bridge local en lecture seule vers `LMU_Data`.
-- Patch mémoire du buffer `game_data` natif de SimPro : TC, TC Cut, ABS, Motor Map et SoC.
+- Patch mémoire du buffer `game_data` natif de SimPro : TC, TC Cut, ABS, Motor Map, SoC et ARB avant/arrière.
 - Aucun dashboard modifié, aucune sauvegarde de fichier `.dash`.
 - Démarrage automatique avec Windows, **activable/désactivable** à tout moment.
 - Désinstallation propre.
@@ -68,7 +68,7 @@ Sorties :
 Ensuite :
 
 - **Patch memoire SimPro** : case à cocher dans la fenêtre ; l'état actif / en attente / arrêté est affiché au-dessus.
-- **Tester** : affiche TC / TC Cut / ABS / MAP / SoC en direct (ou en mode démo).
+- **Tester** : affiche TC / TC Cut / ABS / MAP / SoC / ARB avant / ARB arrière en direct (ou en mode démo).
 - **Ouvrir les logs** : ouvre `%LOCALAPPDATA%\SimagicFix\logs`.
 - **Désinstaller** : arrête le bridge et le patch, retire l'auto-démarrage et le raccourci.
 - **Démarrage automatique** : case à cocher dans la fenêtre ou entrée du menu tray.
@@ -79,7 +79,7 @@ Si l'auto-démarrage est désactivé, le correctif n'est actif que lorsque l'app
 
 ## Patch mémoire SimPro (expérimental)
 
-SimPro rend le dashboard du volant nativement. Pour que TC, TC Cut, ABS, Motor Map et SoC apparaissent sur le volant, SimagicFix écrit ces valeurs directement dans le buffer `game_data` du processus SimPro.
+SimPro rend le dashboard du volant nativement. Pour que TC, TC Cut, ABS, Motor Map, SoC et ARB avant/arrière apparaissent sur le volant, SimagicFix écrit ces valeurs directement dans le buffer `game_data` du processus SimPro.
 
 - Activer la case **« Patch memoire SimPro (experimental) »** dans la fenêtre principale.
 - Le patch démarre avec le bridge et s'arrête avec lui.

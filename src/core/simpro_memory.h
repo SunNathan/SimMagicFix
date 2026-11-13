@@ -10,8 +10,8 @@ namespace simagicfix {
 
 // Experimental bridge between LMU telemetry and SimPro's in-memory game_data
 // buffers. SimPro renders the wheel dashboard natively and does not use the
-// dashboard HTTP endpoint, so the only way to feed TC/ABS/MAP/SoC into the
-// native renderer is to update its game_data buffers directly.
+// dashboard HTTP endpoint, so the only way to feed TC/TC Cut/ABS/MAP/SoC/ARB
+// into the native renderer is to update its game_data buffers directly.
 class SimProMemoryPatcher {
 public:
     using SnapshotProvider = std::function<LmuSnapshot()>;

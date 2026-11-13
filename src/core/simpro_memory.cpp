@@ -113,11 +113,18 @@ struct SimProMemoryPatcher::Impl {
     std::atomic<bool> running{false};
     std::atomic<bool> available{false};
     std::thread thread;
-    std::thread tc_thread;
+    std::thread write_thread;
     std::atomic<uintptr_t> primary_image{0};
     std::atomic<DWORD> simpro_pid{0};
+    std::atomic<int> engine_map_value{0};
+    std::atomic<float> abs_value{0.0f};
     std::atomic<float> tc_value{0.0f};
-    std::atomic<bool> tc_active{false};
+    std::atomic<float> tc_cut_value{0.0f};
+    std::atomic<float> soc_value{0.0f};
+    std::atomic<int> soc_percent_value{0};
+    std::atomic<int> front_arb_value{0};
+    std::atomic<int> rear_arb_value{0};
+    std::atomic<bool> values_active{false};
     mutable std::mutex error_mutex;
     std::string error;
     HANDLE process = nullptr;
@@ -146,7 +153,7 @@ struct SimProMemoryPatcher::Impl {
         pid = 0;
         simpro_pid.store(0);
         primary_image.store(0);
-        tc_active.store(false);
+        values_active.store(false);
         targets.clear();
         available.store(false);
     }
@@ -267,41 +274,6 @@ struct SimProMemoryPatcher::Impl {
         }
     }
 
-    void write_values(const LmuSnapshot& snapshot) {
-        const float abs = static_cast<float>(snapshot.abs);
-        const float tc = static_cast<float>(snapshot.tc);
-        const float tc_cut = static_cast<float>(snapshot.tc_cut);
-        const float soc = static_cast<float>(snapshot.soc);
-        const float soc_percent = static_cast<float>(snapshot.soc_percent());
-        const int soc_percent_int =
-            static_cast<int>(std::lround(soc_percent));
-
-        struct AidBlock {
-            float abs_level;
-            float tc_level;
-            float tc_cut;
-        } aid{abs, tc, tc_cut};
-
-        struct ErsBlock {
-            float ers_max;
-            float ers_stored;
-            int ers_percent;
-        } ers{1.0f, soc, soc_percent_int};
-
-        for (const auto& target : targets) {
-            if (target.layout != Layout::Image) {
-                continue;
-            }
-            // Native wheel renderer layout. The first image target is the
-            // one SimPro's RPC and native renderer read; writing only that
-            // target triples the effective refresh rate and removes flicker.
-            write_int(process, target.max_gears - 0x04, snapshot.motor_map);
-            write_bytes(process, target.max_gears + 0x68, &aid, sizeof(aid));
-            write_bytes(process, target.max_gears + 0xec, &ers, sizeof(ers));
-            break;
-        }
-    }
-
     void loop() {
         timeBeginPeriod(1);
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
@@ -345,32 +317,39 @@ struct SimProMemoryPatcher::Impl {
 
             if (now >= next_snapshot) {
                 snapshot = provider ? provider() : LmuSnapshot{};
+                engine_map_value.store(snapshot.motor_map);
+                abs_value.store(static_cast<float>(snapshot.abs));
                 tc_value.store(static_cast<float>(snapshot.tc));
-                tc_active.store(snapshot.valid);
+                tc_cut_value.store(static_cast<float>(snapshot.tc_cut));
+                soc_value.store(snapshot.soc);
+                soc_percent_value.store(
+                    static_cast<int>(std::lround(snapshot.soc_percent())));
+                front_arb_value.store(snapshot.front_arb);
+                rear_arb_value.store(snapshot.rear_arb);
+                values_active.store(snapshot.valid);
                 next_snapshot = now + std::chrono::milliseconds(5);
             }
 
-            if (process != nullptr && !targets.empty() && snapshot.valid) {
-                write_values(snapshot);
+            if (process != nullptr && !targets.empty() && values_active.load()) {
+                // The dedicated write thread owns the actual memory writes.
+                // Keep this loop light so it does not steal CPU from it.
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
             } else {
                 // Do not burn a core while LMU is not in a live session.
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-            // When LMU is live, no sleep/yield here: the writer must stay
-            // ahead of SimPro's per-frame game_data refresh to avoid visible
-            // 0-value flicker.
         }
         timeEndPeriod(1);
     }
 
-    void tc_loop() {
+    void write_loop() {
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
         HANDLE handle = nullptr;
         DWORD current_pid = 0;
         while (running.load()) {
             const uintptr_t target = primary_image.load();
             const DWORD target_pid = simpro_pid.load();
-            if (target == 0 || target_pid == 0 || !tc_active.load()) {
+            if (target == 0 || target_pid == 0 || !values_active.load()) {
                 if (handle != nullptr) {
                     CloseHandle(handle);
                     handle = nullptr;
@@ -392,7 +371,32 @@ struct SimProMemoryPatcher::Impl {
                     continue;
                 }
             }
-            write_float(handle, target + 0x6c, tc_value.load());
+
+            struct AidBlock {
+                float abs_level;
+                float tc_level;
+                float tc_cut;
+            } aid{abs_value.load(), tc_value.load(), tc_cut_value.load()};
+
+            struct ErsBlock {
+                float ers_max;
+                float ers_stored;
+                int ers_percent;
+            } ers{1.0f, soc_value.load(), soc_percent_value.load()};
+
+            struct ArbBlock {
+                int front;
+                int rear;
+            } arb{front_arb_value.load(), rear_arb_value.load()};
+
+            // Native wheel renderer layout. The first image target is the one
+            // SimPro's RPC and native renderer read. Writing it in a tight
+            // loop keeps every value ahead of SimPro's per-frame refresh.
+            write_int(handle, target - 0x04, engine_map_value.load());
+            write_bytes(handle, target + 0x204, &arb, sizeof(arb));
+            write_bytes(handle, target + 0xec, &ers, sizeof(ers));
+            // ABS/TC/TC Cut last so the TC is the freshest value.
+            write_bytes(handle, target + 0x68, &aid, sizeof(aid));
         }
         if (handle != nullptr) {
             CloseHandle(handle);
@@ -405,7 +409,7 @@ struct SimProMemoryPatcher::Impl {
         }
         running.store(true);
         thread = std::thread([this]() { loop(); });
-        tc_thread = std::thread([this]() { tc_loop(); });
+        write_thread = std::thread([this]() { write_loop(); });
         return true;
     }
 
@@ -416,8 +420,8 @@ struct SimProMemoryPatcher::Impl {
         if (thread.joinable()) {
             thread.join();
         }
-        if (tc_thread.joinable()) {
-            tc_thread.join();
+        if (write_thread.joinable()) {
+            write_thread.join();
         }
         close_process();
     }
