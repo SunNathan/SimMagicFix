@@ -14,7 +14,7 @@ concurrency:
 jobs:
   build:
     name: Build (Windows x64)
-    runs-on: windows-latest
+    runs-on: windows-2022
     permissions:
       contents: read
 
