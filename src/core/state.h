@@ -20,6 +20,7 @@ struct AppState {
     std::string version;
     std::string install_date;
     std::vector<PatchedDashboard> patched;
+    std::vector<std::string> selection;
 };
 
 AppState load_state();

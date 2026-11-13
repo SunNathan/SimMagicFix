@@ -21,6 +21,11 @@ AppState load_state() {
         state.bridge_port = json.value("bridge_port", 56799);
         state.version = json.value("version", "");
         state.install_date = json.value("install_date", "");
+        if (json.contains("selection") && json["selection"].is_array()) {
+            for (const auto& item : json["selection"]) {
+                state.selection.push_back(item.get<std::string>());
+            }
+        }
         if (json.contains("patched") && json["patched"].is_array()) {
             for (const auto& item : json["patched"]) {
                 PatchedDashboard dash;
@@ -52,6 +57,7 @@ bool save_state(const AppState& state) {
     json["bridge_port"] = state.bridge_port;
     json["version"] = state.version;
     json["install_date"] = state.install_date;
+    json["selection"] = state.selection;
     json["patched"] = nlohmann::json::array();
     for (const auto& dash : state.patched) {
         nlohmann::json item;

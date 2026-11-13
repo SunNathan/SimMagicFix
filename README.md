@@ -72,11 +72,18 @@ Sorties :
 
 Ensuite :
 
+- **Liste des dashboards** : visible dans la fenêtre principale, avec cases à cocher.
+  - **Tout** coche tous les dashboards compatibles.
+  - **LMU** coche les dashboards orientés LMU.
+  - **Aucun** décoche tout.
+  - **Rafraîchir** relance le scan.
+- **Appliquer la sélection** : patche uniquement les dashboards cochés.
+- **Restaurer la sélection** : restaure uniquement les dashboards cochés ; les autres restent patchés.
 - **Tester les valeurs** : affiche TC / TC Cut / ABS / MAP / SoC en direct (ou en mode démo).
-- **Réparer** : rescane et réapplique les patchs après une mise à jour SimPro.
-- **Restaurer les dashboards** : remet les fichiers d'origine, sans désinstaller le correctif.
-- **Désinstaller** : restaure les dashboards, retire l'auto-démarrage et le raccourci.
+- **Désinstaller** : restaure tous les dashboards, retire l'auto-démarrage et le raccourci.
 - **Démarrage automatique** : case à cocher dans la fenêtre ou entrée du menu tray.
+
+La sélection est mémorisée dans `state.json` et retrouvée au prochain lancement.
 
 Si l'auto-démarrage est désactivé, le correctif n'est actif que lorsque l'application est lancée (menu Démarrer ou raccourci).
 
@@ -115,7 +122,7 @@ L'icône est générée par `tools/make_icon.py` (Pillow, uniquement au build) e
 ## Limites
 
 - ABS n'est affiché que sur les dashboards qui possèdent déjà une case ABS. Le correctif ne modifie pas les layouts.
-- Une mise à jour SimPro peut écraser les dashboards : utiliser **Réparer**.
+- Une mise à jour SimPro peut écraser les dashboards : rouvrir la fenêtre, vérifier la sélection puis utiliser **Appliquer la sélection**.
 - Une mise à jour LMU peut modifier la structure de `LMU_Data` : `selftest`/`probe` permettent de le détecter ; recompiler avec le header SDK mis à jour.
 - Le correctif ne fonctionne que si l'application (le bridge) est lancée.
 - L'exécutable n'est pas signé : Windows SmartScreen peut afficher un avertissement.

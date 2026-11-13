@@ -159,6 +159,29 @@ bool restore_all() {
     return state.patched.empty();
 }
 
+bool restore_selected(const std::vector<fs::path>& files) {
+    AppState state = load_state();
+    std::set<std::string> wanted;
+    for (const auto& file : files) {
+        wanted.insert(path_to_utf8(file));
+    }
+    std::vector<PatchedDashboard> remaining;
+    bool ok = true;
+    for (const auto& dashboard : state.patched) {
+        if (wanted.find(dashboard.file) == wanted.end()) {
+            remaining.push_back(dashboard);
+            continue;
+        }
+        if (!restore_dashboard(dashboard)) {
+            remaining.push_back(dashboard);
+            ok = false;
+        }
+    }
+    state.patched = std::move(remaining);
+    save_state(state);
+    return ok;
+}
+
 bool uninstall(bool restore_dashboards) {
     bool restored = true;
     if (restore_dashboards) {

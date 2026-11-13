@@ -18,6 +18,7 @@ struct InstallReport {
 InstallReport install(const InstallOptions& options);
 InstallReport repair();
 bool restore_all();
+bool restore_selected(const std::vector<fs::path>& files);
 bool uninstall(bool restore_dashboards);
 
 bool install_self(const fs::path& target);
