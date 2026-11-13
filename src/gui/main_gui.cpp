@@ -3,6 +3,7 @@
 #include "core/dash_patcher.h"
 #include "core/installer.h"
 #include "core/paths.h"
+#include "core/simpro_memory.h"
 #include "core/state.h"
 #include "resource.h"
 
@@ -52,6 +53,7 @@ enum ControlId {
     IDC_SELECT_LMU,
     IDC_SELECT_NONE,
     IDC_REFRESH,
+    IDC_MEMORY_PATCH,
     IDC_TEST_SOURCE,
     IDC_TEST_TC,
     IDC_TEST_TCCUT,
@@ -98,6 +100,7 @@ struct App {
     HWND select_lmu_button = nullptr;
     HWND select_none_button = nullptr;
     HWND refresh_button = nullptr;
+    HWND memory_patch_checkbox = nullptr;
 
     HFONT font = nullptr;
     HFONT bold = nullptr;
@@ -113,6 +116,7 @@ struct App {
     bool simpro_was_running = false;
 
     std::unique_ptr<BridgeService> bridge;
+    std::unique_ptr<SimProMemoryPatcher> memory_patcher;
     NOTIFYICONDATAW nid{};
     bool tray_added = false;
     HICON small_icon = nullptr;
@@ -157,7 +161,7 @@ void set_font(HWND control, HFONT font) {
 }
 
 size_t checked_count() {
-    if (g_app.list == nullptr) {
+    if (g_app.list == nullptr || ListView_GetItemCount(g_app.list) == 0) {
         return g_app.state.selection.size();
     }
     size_t count = 0;
@@ -181,6 +185,28 @@ std::string join_fixes(const std::vector<std::string>& fixes) {
     return result;
 }
 
+void start_memory_patcher() {
+    if (g_app.memory_patcher && g_app.memory_patcher->running()) {
+        return;
+    }
+    g_app.memory_patcher = std::make_unique<SimProMemoryPatcher>([]() {
+        return g_app.bridge ? g_app.bridge->snapshot() : LmuSnapshot{};
+    });
+    if (!g_app.memory_patcher->start()) {
+        log_line("Memory patcher start failed");
+    } else {
+        log_line("Memory patcher started");
+    }
+}
+
+void stop_memory_patcher() {
+    if (g_app.memory_patcher) {
+        g_app.memory_patcher->stop();
+        g_app.memory_patcher.reset();
+        log_line("Memory patcher stopped");
+    }
+}
+
 void start_bridge() {
     if (g_app.bridge && g_app.bridge->running()) {
         return;
@@ -194,10 +220,14 @@ void start_bridge() {
         log_line("Bridge start failed: " + g_app.bridge->last_error());
     } else {
         log_line("Bridge started on port " + std::to_string(options.port));
+        if (g_app.state.memory_patch) {
+            start_memory_patcher();
+        }
     }
 }
 
 void stop_bridge() {
+    stop_memory_patcher();
     if (g_app.bridge) {
         g_app.bridge->stop();
         g_app.bridge.reset();
@@ -301,7 +331,17 @@ void refresh_status() {
     } else {
         bridge_text += "inactif";
     }
+    if (g_app.memory_patcher && g_app.memory_patcher->running()) {
+        bridge_text += g_app.memory_patcher->available()
+                           ? " - patch memoire actif"
+                           : " - patch memoire en attente";
+    }
     set_text(g_app.status_bridge, bridge_text);
+
+    if (g_app.memory_patch_checkbox != nullptr && g_app.installed) {
+        SendMessageW(g_app.memory_patch_checkbox, BM_SETCHECK,
+                     g_app.state.memory_patch ? BST_CHECKED : BST_UNCHECKED, 0);
+    }
 
     if (g_app.installed) {
         const bool autostart = is_autostart_enabled();
@@ -417,6 +457,7 @@ void switch_mode(bool installed) {
     ShowWindow(g_app.logs_button, show_manage);
     ShowWindow(g_app.quit_button, show_manage);
     ShowWindow(g_app.uninstall_button, show_manage);
+    ShowWindow(g_app.memory_patch_checkbox, show_manage);
     SetWindowTextW(g_app.main, installed ? L"SimagicFix" : L"SimagicFix - installation");
     refresh_status();
 }
@@ -1017,15 +1058,23 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             set_font(g_app.select_none_button, g_app.font);
             set_font(g_app.refresh_button, g_app.font);
 
+            g_app.memory_patch_checkbox = CreateWindowExW(
+                0, L"BUTTON",
+                L"Patch memoire SimPro (experimental)",
+                WS_CHILD | BS_AUTOCHECKBOX, 20, 500, 600, 26, hwnd,
+                reinterpret_cast<HMENU>(IDC_MEMORY_PATCH), g_app.instance,
+                nullptr);
+            set_font(g_app.memory_patch_checkbox, g_app.font);
+
             g_app.autostart = CreateWindowExW(
                 0, L"BUTTON",
                 L"Lancer SimagicFix au demarrage de Windows",
-                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 502, 600, 26, hwnd,
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 532, 600, 26, hwnd,
                 reinterpret_cast<HMENU>(IDC_AUTOSTART), g_app.instance, nullptr);
             set_font(g_app.autostart, g_app.font);
 
             g_app.progress = CreateWindowExW(
-                0, PROGRESS_CLASSW, L"", WS_CHILD | PBS_MARQUEE, 20, 534, 600, 16,
+                0, PROGRESS_CLASSW, L"", WS_CHILD | PBS_MARQUEE, 20, 564, 600, 16,
                 hwnd, reinterpret_cast<HMENU>(IDC_PROGRESS), g_app.instance, nullptr);
 
             g_app.install = CreateWindowExW(
@@ -1166,6 +1215,20 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                         toggle_autostart();
                     }
                     break;
+                case IDC_MEMORY_PATCH:
+                    if (g_app.installed) {
+                        g_app.state.memory_patch =
+                            SendMessageW(g_app.memory_patch_checkbox,
+                                         BM_GETCHECK, 0, 0) == BST_CHECKED;
+                        save_state(g_app.state);
+                        if (g_app.state.memory_patch) {
+                            start_memory_patcher();
+                        } else {
+                            stop_memory_patcher();
+                        }
+                        refresh_status();
+                    }
+                    break;
                 default:
                     break;
             }
@@ -1292,7 +1355,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     HWND main_window = CreateWindowExW(
         0, kMainClass, L"SimagicFix",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, CW_USEDEFAULT,
-        CW_USEDEFAULT, 660, 600, nullptr, nullptr, instance, nullptr);
+        CW_USEDEFAULT, 660, 650, nullptr, nullptr, instance, nullptr);
     if (main_window == nullptr) {
         return 1;
     }

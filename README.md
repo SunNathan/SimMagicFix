@@ -14,18 +14,21 @@ Le correctif relie les valeurs **TC**, **TC Cut**, **ABS**, **Motor Map** et **S
 
 SimagicFix fait le pont entre `LMU_Data` et les dashboards, puis corrige uniquement les valeurs codées en dur.
 
+Le rendu natif du volant SimPro ne passe ni par les fichiers `.dash` ni par le RPC JSON : il lit un buffer `game_data` interne. La branche `feature/simpro-memory-patch` ajoute un patch mémoire expérimental qui écrit TC / TC Cut / ABS / Motor Map / SoC directement dans ce buffer, sans modifier les layouts.
+
 ## Fonctionnalités
 
 - Bridge local en lecture seule vers `LMU_Data`.
 - Proxy JSON-RPC : les dashboards continuent d'utiliser SimPro pour le reste (vitesse, RPM, pneus, chronos...).
 - Patch **valeurs uniquement** : aucun widget ajouté, supprimé ou déplacé.
-- Patch de tous les dashboards compatibles détectés.
+- Patch des dashboards sélectionnés (valeurs uniquement).
 - Sauvegarde automatique avant patch.
 - Réparation après une mise à jour SimPro.
 - Restauration des dashboards d'origine.
 - Démarrage automatique avec Windows, **activable/désactivable** à tout moment.
 - Désinstallation propre.
 - Mode démo / outil de diagnostic.
+- Patch mémoire expérimental du `game_data` natif de SimPro pour le volant, activable par case à cocher.
 
 ## Prérequis
 
@@ -87,6 +90,22 @@ La sélection est mémorisée dans `state.json` et retrouvée au prochain lancem
 
 Si l'auto-démarrage est désactivé, le correctif n'est actif que lorsque l'application est lancée (menu Démarrer ou raccourci).
 
+## Patch mémoire SimPro (expérimental)
+
+SimPro rend le dashboard du volant nativement : il ne charge pas les fichiers `.dash` et n'interroge pas le bridge JSON-RPC pour l'écran du volant. Pour que TC, TC Cut, ABS, Motor Map et SoC apparaissent sur le volant, SimagicFix peut écrire ces valeurs directement dans le buffer `game_data` du processus SimPro.
+
+- Activer la case **« Patch memoire SimPro (experimental) »** dans la fenêtre principale.
+- Le patch démarre avec le bridge et s'arrête avec lui.
+- Il ne modifie aucun fichier SimPro et ne touche pas au processus du jeu.
+- Il utilise un cœur CPU pendant une session LMU active.
+- Les offsets sont spécifiques à SimPro 2.1.8 ; une mise à jour de SimPro peut les invalider.
+
+Diagnostic :
+
+```bat
+SimagicFixCLI.exe patch-memory 30
+```
+
 ## Outils de diagnostic
 
 ```bat
@@ -96,6 +115,7 @@ SimagicFixCLI.exe scan
 SimagicFixCLI.exe patch-dash --all
 SimagicFixCLI.exe restore-dash
 SimagicFixCLI.exe mock-shm 30
+SimagicFixCLI.exe patch-memory 30
 SimagicFixCLI.exe run --mock
 ```
 
@@ -115,7 +135,8 @@ L'icône est générée par `tools/make_icon.py` (Pillow, uniquement au build) e
 
 - Lecture **read-only** de la mémoire partagée officielle de LMU.
 - Aucune écriture dans le processus du jeu, aucun fichier LMU modifié.
-- Aucune injection, aucun hook.
+- Le patch mémoire expérimental écrit uniquement dans le processus **SimPro** (buffer `game_data`), jamais dans LMU.
+- Aucune injection de DLL, aucun hook.
 - Les dashboards SimPro sont sauvegardés avant modification.
 - Les sauvegardes se trouvent dans `%LOCALAPPDATA%\SimagicFix\backups`.
 
@@ -125,6 +146,8 @@ L'icône est générée par `tools/make_icon.py` (Pillow, uniquement au build) e
 - Une mise à jour SimPro peut écraser les dashboards : rouvrir la fenêtre, vérifier la sélection puis utiliser **Appliquer la sélection**.
 - Une mise à jour LMU peut modifier la structure de `LMU_Data` : `selftest`/`probe` permettent de le détecter ; recompiler avec le header SDK mis à jour.
 - Le correctif ne fonctionne que si l'application (le bridge) est lancée.
+- Le patch mémoire est spécifique à SimPro 2.1.8 ; il peut cesser de fonctionner après une mise à jour de SimPro.
+- Le patch mémoire utilise un cœur CPU pendant une session LMU active.
 - L'exécutable n'est pas signé : Windows SmartScreen peut afficher un avertissement.
 
 ## Licence

@@ -51,6 +51,7 @@ add_library(simagicfix_core STATIC
   src/core/simpro_client.cpp
   src/core/merge.cpp
   src/core/bridge.cpp
+  src/core/simpro_memory.cpp
   src/core/dash_patcher.cpp
   src/core/autostart.cpp
   src/core/installer.cpp
@@ -69,7 +70,7 @@ target_compile_definitions(simagicfix_core PUBLIC
   _UNICODE)
 
 target_link_libraries(simagicfix_core PUBLIC
-  ws2_32 advapi32 shell32 ole32 uuid)
+  ws2_32 advapi32 shell32 ole32 uuid winmm)
 
 set_target_properties(simagicfix_core PROPERTIES
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

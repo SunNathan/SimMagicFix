@@ -16,6 +16,7 @@ struct PatchedDashboard {
 struct AppState {
     bool installed = false;
     bool auto_start = false;
+    bool memory_patch = false;
     int bridge_port = 56799;
     std::string version;
     std::string install_date;

@@ -5,6 +5,7 @@
 #include "core/mock_shm.h"
 #include "core/paths.h"
 #include "core/probe.h"
+#include "core/simpro_memory.h"
 #include "core/state.h"
 
 #include <atomic>
@@ -34,6 +35,7 @@ void print_help() {
         << "  patch-dash [--all|FILE]  Patch value bindings (backup included)\n"
         << "  restore-dash             Restore original dashboards\n"
         << "  mock-shm [SECONDS]       Create a fake LMU_Data mapping\n"
+        << "  patch-memory [SECONDS]   Write LMU aids into SimPro game_data\n"
         << "  run [--mock] [--port N] [--simpro-port N]\n"
         << "  install [--no-autostart]\n"
         << "  autostart --enable|--disable|--status\n";
@@ -129,6 +131,52 @@ int command_install(const std::vector<std::string>& args) {
     return 0;
 }
 
+int command_patch_memory(const std::vector<std::string>& args) {
+    int seconds = 10;
+    if (!args.empty()) {
+        try {
+            seconds = std::stoi(args[0]);
+        } catch (...) {
+        }
+    }
+    simagicfix::BridgeService::Options options;
+    options.port = 56799;
+    options.simpro_port = simagicfix::simpro_rpc_port();
+    options.mock = false;
+    simagicfix::BridgeService bridge(options);
+    if (!bridge.start()) {
+        std::cout << "Cannot start bridge: " << bridge.last_error() << "\n";
+        return 1;
+    }
+    simagicfix::SimProMemoryPatcher patcher(
+        [&bridge]() { return bridge.snapshot(); });
+    if (!patcher.start()) {
+        std::cout << "Cannot start memory patcher\n";
+        bridge.stop();
+        return 1;
+    }
+    std::cout << "Memory patcher started (SimPro RPC " << options.simpro_port
+              << ")\n";
+    for (int i = 0; i < seconds; ++i) {
+        Sleep(1000);
+        const auto snapshot = bridge.snapshot();
+        std::cout << "t=" << (i + 1)
+                  << " available=" << (patcher.available() ? "yes" : "no")
+                  << " error=\"" << patcher.last_error() << "\""
+                  << " lmu=" << (snapshot.valid ? snapshot.vehicle_name : "-")
+                  << " tc=" << snapshot.tc << "/" << snapshot.tc_max
+                  << " abs=" << snapshot.abs << "/" << snapshot.abs_max
+                  << " map=" << snapshot.motor_map << "/"
+                  << snapshot.motor_map_max
+                  << " soc=" << static_cast<int>(snapshot.soc_percent())
+                  << "\n";
+    }
+    const bool available = patcher.available();
+    patcher.stop();
+    bridge.stop();
+    return available ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -171,6 +219,9 @@ int main(int argc, char** argv) {
         simagicfix::MockShm mock;
         mock.run(seconds);
         return 0;
+    }
+    if (command == "patch-memory") {
+        return command_patch_memory(args);
     }
     if (command == "install") {
         return command_install(args);
