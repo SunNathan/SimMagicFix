@@ -53,11 +53,12 @@ int command_scan() {
     const auto results = simagicfix::scan_dashboards();
     if (results.empty()) {
         std::cout << "No compatible dashboard found in "
-                  << simagicfix::dashboard_dir().string() << "\n";
+                  << simagicfix::path_to_utf8(simagicfix::dashboard_dir()) << "\n";
         return 1;
     }
     for (const auto& item : results) {
-        std::cout << item.name << " [" << item.file.string() << "]\n";
+        std::cout << item.name << " ["
+                  << simagicfix::path_to_utf8(item.file) << "]\n";
         std::cout << "  compatible: " << (item.compatible ? "yes" : "no")
                   << "  already patched: " << (item.already_patched ? "yes" : "no")
                   << "\n";

@@ -20,8 +20,12 @@ bool is_local_origin(const std::string& origin) {
 
 void set_cors(const httplib::Request& request, httplib::Response& response) {
     const auto origin = request.headers.find("Origin");
-    if (origin != request.headers.end() && is_local_origin(origin->second)) {
-        response.set_header("Access-Control-Allow-Origin", origin->second);
+    // SimPro's CEF may use localhost, 127.0.0.1 or a file:// (null) origin.
+    // Remote web pages are not allowed to read the local telemetry.
+    const bool local = origin == request.headers.end() || origin->second == "null" ||
+                       is_local_origin(origin->second);
+    if (local) {
+        response.set_header("Access-Control-Allow-Origin", "*");
         response.set_header("Vary", "Origin");
     }
     response.set_header("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -50,6 +54,10 @@ struct BridgeService::Impl {
     LmuSnapshot snapshot;
     mutable std::mutex error_mutex;
     std::string last_error;
+    std::mutex cache_mutex;
+    std::string cache_key;
+    std::string cache_body;
+    std::chrono::steady_clock::time_point cache_time{};
     httplib::Server server;
 
     explicit Impl(Options value) : options(value) {}
@@ -177,6 +185,17 @@ struct BridgeService::Impl {
         const std::string body = request.body;
         nlohmann::json request_json = parse_or_object(body);
 
+        const auto now = std::chrono::steady_clock::now();
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex);
+            if (body == cache_key &&
+                now - cache_time < std::chrono::milliseconds(25)) {
+                response.status = 200;
+                response.set_content(cache_body, "application/json");
+                return;
+            }
+        }
+
         const auto simpro_body =
             options.mock ? std::optional<std::string>{}
                          : post_json_to_simpro(options.simpro_port, body);
@@ -219,8 +238,15 @@ struct BridgeService::Impl {
         if (request_json.contains("jsonrpc")) {
             result["jsonrpc"] = request_json["jsonrpc"];
         }
+        const std::string serialized = result.dump();
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex);
+            cache_key = body;
+            cache_body = serialized;
+            cache_time = now;
+        }
         response.status = 200;
-        response.set_content(result.dump(), "application/json");
+        response.set_content(serialized, "application/json");
     }
 
     void handle_status(const httplib::Request& request, httplib::Response& response) {

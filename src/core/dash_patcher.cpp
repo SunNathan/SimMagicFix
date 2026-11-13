@@ -221,8 +221,9 @@ bool tar_available() {
 
 bool is_lmu_dashboard_name(const std::string& name) {
     return name.find("LMDh") != std::string::npos ||
-           name.rfind("LM ", 0) == 0 || name == "Comet 992" ||
-           name == "Proto 217" || name.find("SIMAGIC ONE") != std::string::npos;
+           name.rfind("LM ", 0) == 0 || name.rfind("LMP", 0) == 0 ||
+           name == "Comet 992" || name == "Proto 217" ||
+           name.find("SIMAGIC ONE") != std::string::npos;
 }
 
 std::vector<DashScanResult> scan_dashboards() {
