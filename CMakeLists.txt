@@ -80,7 +80,9 @@ set_target_properties(SimagicFixCLI PROPERTIES
 # ---------------------------------------------------------------------------
 if(SIMAGICFIX_BUILD_GUI)
   add_executable(SimagicFix WIN32
-    src/gui/main_gui.cpp)
+    src/gui/main_gui.cpp
+    src/gui/app.rc)
+  target_include_directories(SimagicFix PRIVATE ${CMAKE_SOURCE_DIR}/src/gui)
   target_link_libraries(SimagicFix PRIVATE simagicfix_core comctl32 gdi32 user32)
   set_target_properties(SimagicFix PROPERTIES
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

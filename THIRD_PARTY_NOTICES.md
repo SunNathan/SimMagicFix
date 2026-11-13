@@ -44,6 +44,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## Icon
+
+The application icon is an original community mark (white italic "S" on a red
+circle) inspired by Simagic's colour identity. It does not include the official
+Simagic logo asset. "Simagic" is a trademark of Simagic; this project is
+unofficial and not affiliated with Simagic.
+
+The icon was generated at build time with Pillow (development-only dependency,
+not required at runtime). No font file is redistributed.
+
 ## Le Mans Ultimate SDK
 
 The project includes `SharedMemoryInterface.hpp` / `InternalsPlugin.hpp` from the

@@ -1,5 +1,7 @@
 # SimagicFix
 
+![Icône SimagicFix](resources/icon-preview.png)
+
 Correctif local pour la télémétrie **Le Mans Ultimate** sur **SimPro Manager 2.x** (bases Alpha) avec volant **Simagic FX Pro**.
 
 Le correctif relie les valeurs **TC**, **TC Cut**, **ABS**, **Motor Map** et **SoC** aux dashboards SimPro, sans modifier les layouts : seules les expressions de valeur sont remplacées.
@@ -95,6 +97,12 @@ SimagicFixCLI.exe run --mock
 - `scan` : dashboards compatibles et état du patch.
 - `mock-shm` : crée un faux `LMU_Data` avec des valeurs connues (TC=5, ABS=3, MAP=7, SoC=64) pour valider la lecture sans LMU.
 - `run --mock` : bridge avec valeurs simulées, utile pour tester un dashboard dans un navigateur.
+
+## Icône
+
+L'icône de l'application est une création communautaire : un “S” blanc italique sur un cercle rouge, inspiré des couleurs de Simagic. **Aucun logo officiel Simagic n'est embarqué dans le projet.** Simagic est une marque de Simagic ; ce projet est non officiel et n'est pas affilié à Simagic.
+
+L'icône est générée par `tools/make_icon.py` (Pillow, uniquement au build) et versionnée dans `src/gui/app.ico` / `src/gui/tray.ico`.
 
 ## Sécurité et anti-triche
 

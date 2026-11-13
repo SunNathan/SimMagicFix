@@ -95,6 +95,7 @@ bool create_start_menu_shortcut(const fs::path& target) {
         return false;
     }
     link->SetPath(target.c_str());
+    link->SetIconLocation(target.c_str(), 0);
     link->SetWorkingDirectory(target.parent_path().c_str());
     link->SetDescription(L"SimagicFix - correctif telemetrie LMU");
     IPersistFile* file = nullptr;

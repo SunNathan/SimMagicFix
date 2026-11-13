@@ -4,6 +4,7 @@
 #include "core/installer.h"
 #include "core/paths.h"
 #include "core/state.h"
+#include "resource.h"
 
 #include <commctrl.h>
 #include <shellapi.h>
@@ -104,6 +105,9 @@ struct App {
     std::unique_ptr<BridgeService> bridge;
     NOTIFYICONDATAW nid{};
     bool tray_added = false;
+    HICON small_icon = nullptr;
+    HICON tray_icon = nullptr;
+    bool tray_icon_owned = false;
 
     std::thread task_thread;
     TaskKind task_kind = TaskKind::None;
@@ -204,7 +208,14 @@ void add_tray(HWND hwnd) {
     g_app.nid.uID = 1;
     g_app.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_app.nid.uCallbackMessage = WM_APP_TRAY;
-    g_app.nid.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    g_app.tray_icon = static_cast<HICON>(
+        LoadImageW(g_app.instance, MAKEINTRESOURCEW(IDI_TRAY_ICON), IMAGE_ICON,
+                   16, 16, LR_DEFAULTCOLOR));
+    g_app.tray_icon_owned = g_app.tray_icon != nullptr;
+    if (g_app.tray_icon == nullptr) {
+        g_app.tray_icon = LoadIconW(nullptr, IDI_APPLICATION);
+    }
+    g_app.nid.hIcon = g_app.tray_icon;
     wcsncpy_s(g_app.nid.szTip, L"SimagicFix", _TRUNCATE);
     g_app.tray_added = Shell_NotifyIconW(NIM_ADD, &g_app.nid) != FALSE;
     update_tray();
@@ -215,6 +226,11 @@ void remove_tray() {
         Shell_NotifyIconW(NIM_DELETE, &g_app.nid);
         g_app.tray_added = false;
     }
+    if (g_app.tray_icon_owned && g_app.tray_icon != nullptr) {
+        DestroyIcon(g_app.tray_icon);
+    }
+    g_app.tray_icon = nullptr;
+    g_app.tray_icon_owned = false;
 }
 
 void refresh_status() {
@@ -970,6 +986,10 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             }
             stop_bridge();
             remove_tray();
+            if (g_app.small_icon != nullptr) {
+                DestroyIcon(g_app.small_icon);
+                g_app.small_icon = nullptr;
+            }
             if (g_app.test != nullptr) {
                 DestroyWindow(g_app.test);
                 g_app.test = nullptr;
@@ -1032,12 +1052,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         }
     }
 
+    HICON app_icon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APP_ICON));
+    if (app_icon == nullptr) {
+        app_icon = LoadIconW(nullptr, IDI_APPLICATION);
+    }
+    g_app.small_icon = static_cast<HICON>(
+        LoadImageW(instance, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON, 16, 16,
+                   LR_DEFAULTCOLOR));
+
     WNDCLASSEXW main_class{};
     main_class.cbSize = sizeof(main_class);
     main_class.lpfnWndProc = main_proc;
     main_class.hInstance = instance;
     main_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    main_class.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    main_class.hIcon = app_icon;
+    main_class.hIconSm = g_app.small_icon;
     main_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     main_class.lpszClassName = kMainClass;
     RegisterClassExW(&main_class);
@@ -1047,7 +1076,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     test_class.lpfnWndProc = test_proc;
     test_class.hInstance = instance;
     test_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    test_class.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    test_class.hIcon = app_icon;
+    test_class.hIconSm = g_app.small_icon;
     test_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     test_class.lpszClassName = kTestClass;
     RegisterClassExW(&test_class);
