@@ -28,6 +28,9 @@ struct DashPatchResult {
 // the .dash ZIP archives).
 bool tar_available();
 
+// Heuristic used to preselect LMU-oriented dashboards in the installer.
+bool is_lmu_dashboard_name(const std::string& name);
+
 // Scans the SimPro dashboard folder and reports which .dash files can be
 // patched. Does not modify anything.
 std::vector<DashScanResult> scan_dashboards();

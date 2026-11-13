@@ -23,118 +23,122 @@ void set_default(nlohmann::json& object, const char* key,
 
 void fill_defaults(nlohmann::json& gd, const LmuSnapshot& snapshot, bool mock) {
     const double elapsed = snapshot.elapsed_time;
-    const double speed = 120.0 + 40.0 * std::sin(elapsed * 0.5);
-    const double rpm = 5000.0 + 2000.0 * std::sin(elapsed * 2.0);
-    const int gear = 1 + (static_cast<int>(elapsed) % 6);
+    const double speed = mock ? 120.0 + 40.0 * std::sin(elapsed * 0.5) : 0.0;
+    const double rpm = mock ? 5000.0 + 2000.0 * std::sin(elapsed * 2.0) : 0.0;
+    const int gear = mock ? 1 + (static_cast<int>(elapsed) % 6) : 0;
 
     set_default(gd, "speed", speed);
     set_default(gd, "rpm", rpm);
     set_default(gd, "gear", gear);
     set_default(gd, "maxGears", 6);
-    set_default(gd, "fuel", 30.0);
-    set_default(gd, "fuelPerLap", 2.4);
-    set_default(gd, "fuelPercent", 60.0);
-    set_default(gd, "completedLaps", static_cast<int>(elapsed / 90.0));
-    set_default(gd, "position", 3);
-    set_default(gd, "gapAhead", 1.2);
-    set_default(gd, "gapBehind", -0.8);
-    set_default(gd, "currentLapTime", "1:23:456");
-    set_default(gd, "lastLapTime", "1:23:456");
-    set_default(gd, "bestLapTime", "1:22:000");
-    set_default(gd, "allTimeBest", "1:22:000");
-    set_default(gd, "brakeBias", 55.0);
+    set_default(gd, "fuel", mock ? 30.0 : 0.0);
+    set_default(gd, "fuelPerLap", mock ? 2.4 : 0.0);
+    set_default(gd, "fuelPercent", mock ? 60.0 : 0.0);
+    set_default(gd, "completedLaps",
+                mock ? static_cast<int>(elapsed / 90.0) : 0);
+    set_default(gd, "position", mock ? 3 : 0);
+    set_default(gd, "gapAhead", mock ? 1.2 : 0.0);
+    set_default(gd, "gapBehind", mock ? -0.8 : 0.0);
+    set_default(gd, "currentLapTime", mock ? "1:23:456" : "0:00:000");
+    set_default(gd, "lastLapTime", mock ? "1:23:456" : "0:00:000");
+    set_default(gd, "bestLapTime", mock ? "1:22:000" : "0:00:000");
+    set_default(gd, "allTimeBest", mock ? "1:22:000" : "0:00:000");
+    set_default(gd, "brakeBias", mock ? 55.0 : 0.0);
     set_default(gd, "clutch", 0.0);
     set_default(gd, "throttle", 0.0);
     set_default(gd, "brake", 0.0);
-    set_default(gd, "oilPressure", 4.0);
-    set_default(gd, "oilTemperature", 90.0);
-    set_default(gd, "waterTemperature", 85.0);
-    set_default(gd, "tyrePressure", nlohmann::json::array({2.0, 2.0, 2.0, 2.0}));
+    set_default(gd, "oilPressure", mock ? 4.0 : 0.0);
+    set_default(gd, "oilTemperature", mock ? 90.0 : 0.0);
+    set_default(gd, "waterTemperature", mock ? 85.0 : 0.0);
+    set_default(gd, "tyrePressure",
+                mock ? nlohmann::json::array({2.0, 2.0, 2.0, 2.0})
+                     : nlohmann::json::array({0.0, 0.0, 0.0, 0.0}));
     set_default(gd, "tyreTemperature",
-                nlohmann::json::array({80.0, 80.0, 80.0, 80.0}));
-    set_default(gd, "tyreWear", nlohmann::json::array({100, 100, 100, 100}));
+                mock ? nlohmann::json::array({80.0, 80.0, 80.0, 80.0})
+                     : nlohmann::json::array({0.0, 0.0, 0.0, 0.0}));
+    set_default(gd, "tyreWear",
+                mock ? nlohmann::json::array({100, 100, 100, 100})
+                     : nlohmann::json::array({0, 0, 0, 0}));
     set_default(gd, "wheelSlip", nlohmann::json::array({0.0, 0.0, 0.0, 0.0}));
     set_default(gd, "tractionLoss", 0.0);
     set_default(gd, "drsLevel", 0.0);
-    set_default(gd, "ersMode", 2);
+    set_default(gd, "ersMode", mock ? 2 : 0);
     set_default(gd, "pushToPass", 0);
-    set_default(gd, "diffAdjOnThrottle", 3);
+    set_default(gd, "diffAdjOnThrottle", mock ? 3 : 0);
     set_default(gd, "diffEntry", 0);
     set_default(gd, "diffMiddle", 0);
     set_default(gd, "diffExit", 0);
-    set_default(gd, "isGameRunning", 1);
+    set_default(gd, "isGameRunning", mock ? 1 : 0);
     set_default(gd, "isGamePaused", 0);
-
-    (void)mock;
 }
 
-void fill_v1_defaults(nlohmann::json& v1, const LmuSnapshot& snapshot) {
+void fill_v1_defaults(nlohmann::json& v1, const LmuSnapshot& snapshot, bool mock) {
     const double elapsed = snapshot.elapsed_time;
     set_default(v1, "ang", 0);
-    set_default(v1, "spd", static_cast<int>(120.0 + 40.0 * std::sin(elapsed * 0.5)));
-    set_default(v1, "rpm", static_cast<int>(5000.0 + 2000.0 * std::sin(elapsed * 2.0)));
+    set_default(v1, "spd", mock ? static_cast<int>(120.0 + 40.0 * std::sin(elapsed * 0.5)) : 0);
+    set_default(v1, "rpm", mock ? static_cast<int>(5000.0 + 2000.0 * std::sin(elapsed * 2.0)) : 0);
     set_default(v1, "rpm_led", 9);
-    set_default(v1, "rpm_percentage", 50);
-    set_default(v1, "gear", 1 + (static_cast<int>(elapsed) % 6));
+    set_default(v1, "rpm_percentage", mock ? 50 : 0);
+    set_default(v1, "gear", mock ? 1 + (static_cast<int>(elapsed) % 6) : 0);
     set_default(v1, "drs", 0);
     set_default(v1, "th", 0);
     set_default(v1, "brk", 0);
     set_default(v1, "cl", 0);
     set_default(v1, "gain_loss", 0);
-    set_default(v1, "lap", static_cast<int>(elapsed / 90.0));
+    set_default(v1, "lap", mock ? static_cast<int>(elapsed / 90.0) : 0);
     set_default(v1, "flag", 0);
     set_default(v1, "tb", 0);
-    set_default(v1, "brake_bias", 55.0);
-    set_default(v1, "ersm", 2);
+    set_default(v1, "brake_bias", mock ? 55.0 : 0.0);
+    set_default(v1, "ersm", mock ? 2 : 0);
     set_default(v1, "p2p", 0);
     set_default(v1, "fxl", 0.0);
     set_default(v1, "favg", 0.0);
     set_default(v1, "diff", 0);
     set_default(v1, "tps", 0);
-    set_default(v1, "gapa", 1.2);
-    set_default(v1, "gapb", -0.8);
+    set_default(v1, "gapa", mock ? 1.2 : 0.0);
+    set_default(v1, "gapb", mock ? -0.8 : 0.0);
     set_default(v1, "entr", 0);
     set_default(v1, "mid", 0);
     set_default(v1, "hspd", 0);
     set_default(v1, "eb", 0);
     set_default(v1, "pit_flag", 0);
     set_default(v1, "drs_flag", 0);
-    set_default(v1, "oil_temp", 90);
-    set_default(v1, "oil_press", 4);
-    set_default(v1, "water_temp", 85);
-    set_default(v1, "pos", 3);
-    set_default(v1, "fuel", 30);
-    set_default(v1, "trun", "1:23:456");
-    set_default(v1, "tbest", "1:22:000");
-    set_default(v1, "tlast", "1:23:456");
-    set_default(v1, "tt_ul", 80);
-    set_default(v1, "tt_ur", 80);
-    set_default(v1, "tt_dl", 80);
-    set_default(v1, "tt_dr", 80);
-    set_default(v1, "tti_ul", 80);
-    set_default(v1, "tti_ur", 80);
-    set_default(v1, "tti_dl", 80);
-    set_default(v1, "tti_dr", 80);
-    set_default(v1, "ttm_ul", 80);
-    set_default(v1, "ttm_ur", 80);
-    set_default(v1, "ttm_dl", 80);
-    set_default(v1, "ttm_dr", 80);
-    set_default(v1, "tto_ul", 80);
-    set_default(v1, "tto_ur", 80);
-    set_default(v1, "tto_dl", 80);
-    set_default(v1, "tto_dr", 80);
-    set_default(v1, "bt_ul", 400);
-    set_default(v1, "bt_ur", 400);
-    set_default(v1, "bt_dl", 300);
-    set_default(v1, "bt_dr", 300);
-    set_default(v1, "tp_ul", 2.0);
-    set_default(v1, "tp_ur", 2.0);
-    set_default(v1, "tp_dl", 2.0);
-    set_default(v1, "tp_dr", 2.0);
-    set_default(v1, "twp_ul", 100);
-    set_default(v1, "twp_ur", 100);
-    set_default(v1, "twp_dl", 100);
-    set_default(v1, "twp_dr", 100);
+    set_default(v1, "oil_temp", mock ? 90 : 0);
+    set_default(v1, "oil_press", mock ? 4 : 0);
+    set_default(v1, "water_temp", mock ? 85 : 0);
+    set_default(v1, "pos", mock ? 3 : 0);
+    set_default(v1, "fuel", mock ? 30 : 0);
+    set_default(v1, "trun", mock ? "1:23:456" : "0:00:000");
+    set_default(v1, "tbest", mock ? "1:22:000" : "0:00:000");
+    set_default(v1, "tlast", mock ? "1:23:456" : "0:00:000");
+    set_default(v1, "tt_ul", mock ? 80 : 0);
+    set_default(v1, "tt_ur", mock ? 80 : 0);
+    set_default(v1, "tt_dl", mock ? 80 : 0);
+    set_default(v1, "tt_dr", mock ? 80 : 0);
+    set_default(v1, "tti_ul", mock ? 80 : 0);
+    set_default(v1, "tti_ur", mock ? 80 : 0);
+    set_default(v1, "tti_dl", mock ? 80 : 0);
+    set_default(v1, "tti_dr", mock ? 80 : 0);
+    set_default(v1, "ttm_ul", mock ? 80 : 0);
+    set_default(v1, "ttm_ur", mock ? 80 : 0);
+    set_default(v1, "ttm_dl", mock ? 80 : 0);
+    set_default(v1, "ttm_dr", mock ? 80 : 0);
+    set_default(v1, "tto_ul", mock ? 80 : 0);
+    set_default(v1, "tto_ur", mock ? 80 : 0);
+    set_default(v1, "tto_dl", mock ? 80 : 0);
+    set_default(v1, "tto_dr", mock ? 80 : 0);
+    set_default(v1, "bt_ul", mock ? 400 : 0);
+    set_default(v1, "bt_ur", mock ? 400 : 0);
+    set_default(v1, "bt_dl", mock ? 300 : 0);
+    set_default(v1, "bt_dr", mock ? 300 : 0);
+    set_default(v1, "tp_ul", mock ? 2.0 : 0.0);
+    set_default(v1, "tp_ur", mock ? 2.0 : 0.0);
+    set_default(v1, "tp_dl", mock ? 2.0 : 0.0);
+    set_default(v1, "tp_dr", mock ? 2.0 : 0.0);
+    set_default(v1, "twp_ul", mock ? 100 : 0);
+    set_default(v1, "twp_ur", mock ? 100 : 0);
+    set_default(v1, "twp_dl", mock ? 100 : 0);
+    set_default(v1, "twp_dr", mock ? 100 : 0);
 }
 
 }  // namespace
@@ -210,7 +214,7 @@ nlohmann::json build_response(const nlohmann::json& simpro_response,
         }
     }
     if (mock || v1.empty()) {
-        fill_v1_defaults(v1, snapshot);
+        fill_v1_defaults(v1, snapshot, mock);
     }
     if (mock || snapshot.valid) {
         v1["tc"] = snapshot.tc;

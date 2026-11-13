@@ -39,6 +39,16 @@ std::wstring utf8_to_wide(const std::string& value) {
     return out;
 }
 
+std::string path_to_utf8(const fs::path& path) {
+    const std::u8string value = path.u8string();
+    return std::string(reinterpret_cast<const char*>(value.data()), value.size());
+}
+
+fs::path utf8_to_path(const std::string& value) {
+    return fs::path(std::u8string(reinterpret_cast<const char8_t*>(value.data()),
+                                  value.size()));
+}
+
 namespace {
 
 std::wstring get_env_w(const wchar_t* name) {
@@ -197,9 +207,11 @@ fs::path find_simpro_in_registry() {
                 if (comma != std::wstring::npos) {
                     clean.resize(comma);
                 }
-                if (path_is_file(fs::path(clean))) {
+                const fs::path icon_path(clean);
+                if (path_is_file(icon_path) &&
+                    lower(icon_path.filename().wstring()) == L"simpro.exe") {
                     RegCloseKey(root);
-                    return fs::path(clean);
+                    return icon_path;
                 }
             }
         }

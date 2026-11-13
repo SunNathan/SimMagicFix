@@ -39,6 +39,9 @@ namespace fs = std::filesystem;
 std::string wide_to_utf8(const std::wstring& value);
 std::wstring utf8_to_wide(const std::string& value);
 
+std::string path_to_utf8(const fs::path& path);
+fs::path utf8_to_path(const std::string& value);
+
 inline std::string trim(std::string value) {
     const auto first = value.find_first_not_of(" \t\r\n");
     if (first == std::string::npos) {

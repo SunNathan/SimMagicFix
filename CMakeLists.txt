@@ -26,7 +26,7 @@ if(NOT LMU_SDK_DIR)
     endif()
   endforeach()
 endif()
-if(NOT LMU_SDK_DIR)
+if(NOT LMU_SDK_DIR OR NOT EXISTS "${LMU_SDK_DIR}/SharedMemoryInterface.hpp")
   message(FATAL_ERROR
     "LMU SDK not found. Configure with -DLMU_SDK_DIR=\"C:/.../Le Mans Ultimate/Support/SharedMemoryInterface\"")
 endif()
@@ -57,6 +57,7 @@ target_compile_definitions(simagicfix_core PUBLIC
   NOMINMAX
   WIN32_LEAN_AND_MEAN
   _WIN32_WINNT=0x0A00
+  _CRT_SECURE_NO_WARNINGS
   UNICODE
   _UNICODE)
 

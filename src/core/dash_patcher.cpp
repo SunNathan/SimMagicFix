@@ -48,7 +48,15 @@ bool run_process(const std::wstring& command, std::string& error) {
         error = "Cannot start tar.exe";
         return false;
     }
-    WaitForSingleObject(process.hProcess, INFINITE);
+    const DWORD wait = WaitForSingleObject(process.hProcess, 30000);
+    if (wait == WAIT_TIMEOUT) {
+        TerminateProcess(process.hProcess, 1);
+        WaitForSingleObject(process.hProcess, 2000);
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        error = "tar.exe timed out";
+        return false;
+    }
     DWORD exit_code = 1;
     GetExitCodeProcess(process.hProcess, &exit_code);
     CloseHandle(process.hThread);
@@ -90,8 +98,20 @@ bool extract_dash(const fs::path& file, const fs::path& target, std::string& err
 
 bool create_dash(const fs::path& source_dir, const fs::path& zip_file,
                  std::string& error) {
-    const std::wstring command = L"tar.exe --format zip -cf " + quote(zip_file) +
-                                 L" -C " + quote(source_dir) + L" .";
+    std::error_code ec;
+    std::vector<fs::path> entries;
+    for (const auto& item : fs::directory_iterator(source_dir, ec)) {
+        entries.push_back(item.path().filename());
+    }
+    if (ec || entries.empty()) {
+        error = "Cannot enumerate dashboard files";
+        return false;
+    }
+    std::wstring command = L"tar.exe --format zip -cf " + quote(zip_file) +
+                           L" -C " + quote(source_dir);
+    for (const auto& entry : entries) {
+        command += L" " + quote(entry);
+    }
     return run_process(command, error);
 }
 
@@ -128,14 +148,6 @@ bool apply_rule(std::string& js, const Rule& rule, bool caddy) {
     return true;
 }
 
-bool already_patched(const std::string& js) {
-    return js.find("56799") != std::string::npos &&
-           (js.find("r.tcLevel") != std::string::npos ||
-            js.find("r.absLevel") != std::string::npos ||
-            js.find("r.engineMap") != std::string::npos ||
-            js.find("r.soc") != std::string::npos);
-}
-
 uint32_t file_hash(const fs::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -165,6 +177,8 @@ std::string safe_timestamp() {
 
 struct JsScan {
     bool already = false;
+    bool port_old = false;
+    bool port_new = false;
     std::set<std::string> fixes;
 };
 
@@ -176,10 +190,16 @@ JsScan scan_js_dir(const fs::path& root, bool caddy) {
             continue;
         }
         std::ifstream input(item.path(), std::ios::binary);
+        if (!input) {
+            continue;
+        }
         std::string js((std::istreambuf_iterator<char>(input)),
                        std::istreambuf_iterator<char>());
-        if (already_patched(js)) {
-            result.already = true;
+        if (js.find("56789") != std::string::npos) {
+            result.port_old = true;
+        }
+        if (js.find("56799") != std::string::npos) {
+            result.port_new = true;
         }
         for (const auto& rule : kRules) {
             std::string copy = js;
@@ -188,6 +208,7 @@ JsScan scan_js_dir(const fs::path& root, bool caddy) {
             }
         }
     }
+    result.already = result.port_new && !result.port_old && result.fixes.empty();
     return result;
 }
 
@@ -196,6 +217,12 @@ JsScan scan_js_dir(const fs::path& root, bool caddy) {
 bool tar_available() {
     wchar_t path[MAX_PATH] = {};
     return SearchPathW(nullptr, L"tar.exe", nullptr, MAX_PATH, path, nullptr) > 0;
+}
+
+bool is_lmu_dashboard_name(const std::string& name) {
+    return name.find("LMDh") != std::string::npos ||
+           name.rfind("LM ", 0) == 0 || name == "Comet 992" ||
+           name == "Proto 217" || name.find("SIMAGIC ONE") != std::string::npos;
 }
 
 std::vector<DashScanResult> scan_dashboards() {
@@ -212,7 +239,7 @@ std::vector<DashScanResult> scan_dashboards() {
         if (!item.is_regular_file() || item.path().extension() != L".dash") {
             continue;
         }
-        const std::string name = item.path().stem().string();
+        const std::string name = path_to_utf8(item.path().stem());
         const fs::path temp = make_temp_dir(name, "scan");
         std::string error;
         if (!extract_dash(item.path(), temp, error)) {
@@ -221,15 +248,18 @@ std::vector<DashScanResult> scan_dashboards() {
         }
         const JsScan scan = scan_js_dir(temp, is_caddy_dashboard(name));
         fs::remove_all(temp, ec);
-        if (scan.fixes.empty() && !scan.already) {
+        if (scan.fixes.empty() && !scan.port_old && !scan.already) {
             continue;
         }
         DashScanResult result;
         result.file = item.path();
         result.name = name;
-        result.compatible = !scan.fixes.empty();
+        result.compatible = !scan.fixes.empty() || scan.port_old;
         result.already_patched = scan.already;
         result.fixes.assign(scan.fixes.begin(), scan.fixes.end());
+        if (scan.port_old) {
+            result.fixes.push_back("Bridge port");
+        }
         results.push_back(std::move(result));
     }
     std::sort(results.begin(), results.end(),
@@ -242,7 +272,7 @@ std::vector<DashScanResult> scan_dashboards() {
 DashPatchResult patch_dashboard(const fs::path& file) {
     DashPatchResult result;
     result.file = file;
-    result.name = file.stem().string();
+    result.name = path_to_utf8(file.stem());
     result.original_crc = file_hash(file);
     if (!tar_available()) {
         result.error = "tar.exe not found (Windows 10/11 is required)";
@@ -258,6 +288,8 @@ DashPatchResult patch_dashboard(const fs::path& file) {
 
     const bool caddy = is_caddy_dashboard(result.name);
     std::set<std::string> applied;
+    std::set<std::string> applied_rules;
+    bool port_applied = false;
     bool changed = false;
 
     for (const auto& item : fs::recursive_directory_iterator(temp, ec)) {
@@ -265,11 +297,17 @@ DashPatchResult patch_dashboard(const fs::path& file) {
             continue;
         }
         std::ifstream input(item.path(), std::ios::binary);
+        if (!input) {
+            fs::remove_all(temp, ec);
+            result.error = "Cannot read dashboard script";
+            return result;
+        }
         std::string js((std::istreambuf_iterator<char>(input)),
                        std::istreambuf_iterator<char>());
         for (const auto& rule : kRules) {
             if (apply_rule(js, rule, caddy)) {
                 applied.insert(rule.description);
+                applied_rules.insert(rule.description);
                 changed = true;
             }
         }
@@ -278,9 +316,21 @@ DashPatchResult patch_dashboard(const fs::path& file) {
             js.replace(port_pos, 5, "56799");
             port_pos += 5;
             changed = true;
+            port_applied = true;
+            applied.insert("Bridge port");
         }
         std::ofstream output(item.path(), std::ios::binary | std::ios::trunc);
+        if (!output) {
+            fs::remove_all(temp, ec);
+            result.error = "Cannot write dashboard script";
+            return result;
+        }
         output.write(js.data(), static_cast<std::streamsize>(js.size()));
+        if (!output) {
+            fs::remove_all(temp, ec);
+            result.error = "Cannot write dashboard script";
+            return result;
+        }
     }
 
     if (!changed) {
@@ -299,11 +349,12 @@ DashPatchResult patch_dashboard(const fs::path& file) {
         result.error = "Cannot create backup: " + ec.message();
         return result;
     }
-    result.backup = backup.string();
+    result.backup = path_to_utf8(backup);
 
     const fs::path new_zip = file.wstring() + L".new.zip";
     if (!create_dash(temp, new_zip, result.error)) {
         fs::remove_all(temp, ec);
+        fs::remove(new_zip, ec);
         return result;
     }
     if (!MoveFileExW(new_zip.wstring().c_str(), file.wstring().c_str(),
@@ -323,7 +374,8 @@ DashPatchResult patch_dashboard(const fs::path& file) {
     }
     const JsScan scan = scan_js_dir(verify, caddy);
     fs::remove_all(verify, ec);
-    if (!scan.already && scan.fixes.size() < applied.size()) {
+    if ((port_applied && !(scan.port_new && !scan.port_old)) ||
+        (!scan.already && scan.fixes.size() < applied_rules.size())) {
         // Put the original file back so a failed verification never leaves a
         // half-patched dashboard behind.
         fs::copy_file(backup, file, fs::copy_options::overwrite_existing, ec);
@@ -339,11 +391,17 @@ DashPatchResult patch_dashboard(const fs::path& file) {
 
 bool restore_dashboard(const PatchedDashboard& dashboard) {
     std::error_code ec;
-    if (dashboard.backup.empty() || !fs::is_regular_file(dashboard.backup, ec)) {
+    const fs::path file = utf8_to_path(dashboard.file);
+    const fs::path backup = utf8_to_path(dashboard.backup);
+    if (dashboard.backup.empty() || !fs::is_regular_file(backup, ec)) {
         return false;
     }
-    fs::copy_file(dashboard.backup, dashboard.file,
-                  fs::copy_options::overwrite_existing, ec);
+    // Do not silently downgrade a dashboard that SimPro has updated since the
+    // patch was applied.
+    if (dashboard.patched_crc != 0 && file_hash(file) != dashboard.patched_crc) {
+        return false;
+    }
+    fs::copy_file(backup, file, fs::copy_options::overwrite_existing, ec);
     return !ec;
 }
 

@@ -24,6 +24,7 @@ struct MockShm::Impl {
 
     bool create() {
         close();
+        SetLastError(0);
         handle = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
                                     sizeof(SharedMemoryLayout), L"LMU_Data");
         if (handle == nullptr) {

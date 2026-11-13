@@ -63,12 +63,19 @@ bool save_state(const AppState& state) {
         item["fixes"] = dash.fixes;
         json["patched"].push_back(std::move(item));
     }
-    std::ofstream output(state_path());
+    const fs::path path = state_path();
+    const fs::path temp = path.wstring() + L".tmp";
+    std::ofstream output(temp);
     if (!output) {
         return false;
     }
     output << json.dump(2);
-    return output.good();
+    output.close();
+    if (!output) {
+        return false;
+    }
+    return MoveFileExW(temp.wstring().c_str(), path.wstring().c_str(),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
 }
 
 }  // namespace simagicfix

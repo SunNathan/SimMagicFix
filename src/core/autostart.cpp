@@ -45,8 +45,14 @@ bool is_autostart_enabled() {
         RegQueryValueExW(key, kRunValue, nullptr, &type,
                          reinterpret_cast<LPBYTE>(value), &size);
     RegCloseKey(key);
-    return result == ERROR_SUCCESS && (type == REG_SZ || type == REG_EXPAND_SZ) &&
-           value[0] != L'\0';
+    if (result != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ) ||
+        value[0] == L'\0') {
+        return false;
+    }
+    // A stale entry pointing at an old location must not be reported as active.
+    const std::wstring command(value);
+    const std::wstring exe = installed_exe_path().wstring();
+    return !exe.empty() && command.find(exe) != std::wstring::npos;
 }
 
 bool enable_autostart(const fs::path& exe) {
@@ -89,7 +95,6 @@ bool create_start_menu_shortcut(const fs::path& target) {
         return false;
     }
     link->SetPath(target.c_str());
-    link->SetArguments(L"--tray");
     link->SetWorkingDirectory(target.parent_path().c_str());
     link->SetDescription(L"SimagicFix - correctif telemetrie LMU");
     IPersistFile* file = nullptr;

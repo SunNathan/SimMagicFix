@@ -2,6 +2,7 @@
 
 #include "core/lmu_reader.h"
 #include "core/merge.h"
+#include "core/paths.h"
 #include "core/simpro_client.h"
 #include "httplib.h"
 #include "json.hpp"
@@ -12,8 +13,17 @@ namespace simagicfix {
 
 namespace {
 
-void set_cors(httplib::Response& response) {
-    response.set_header("Access-Control-Allow-Origin", "*");
+bool is_local_origin(const std::string& origin) {
+    return origin.rfind("http://localhost:", 0) == 0 ||
+           origin.rfind("http://127.0.0.1:", 0) == 0;
+}
+
+void set_cors(const httplib::Request& request, httplib::Response& response) {
+    const auto origin = request.headers.find("Origin");
+    if (origin != request.headers.end() && is_local_origin(origin->second)) {
+        response.set_header("Access-Control-Allow-Origin", origin->second);
+        response.set_header("Vary", "Origin");
+    }
     response.set_header("Access-Control-Allow-Methods", "POST, OPTIONS");
     response.set_header("Access-Control-Allow-Headers", "Content-Type");
     response.set_header("Cache-Control", "no-store");
@@ -109,12 +119,27 @@ struct BridgeService::Impl {
 
     void reader_loop() {
         auto next_retry = std::chrono::steady_clock::now();
+        auto next_process_check = std::chrono::steady_clock::now();
         while (running.load()) {
             if (options.mock) {
                 store_snapshot(make_mock_snapshot());
                 lmu_available.store(true);
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
+            }
+
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= next_process_check) {
+                next_process_check = now + std::chrono::seconds(1);
+                if (!process_running(L"Le Mans Ultimate.exe")) {
+                    if (reader) {
+                        reader->close();
+                    }
+                    lmu_available.store(false);
+                    store_snapshot(LmuSnapshot{});
+                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                    continue;
+                }
             }
 
             if (!reader) {
@@ -148,7 +173,7 @@ struct BridgeService::Impl {
     }
 
     void handle_jsonrpc(const httplib::Request& request, httplib::Response& response) {
-        set_cors(response);
+        set_cors(request, response);
         const std::string body = request.body;
         nlohmann::json request_json = parse_or_object(body);
 
@@ -160,14 +185,9 @@ struct BridgeService::Impl {
                 ? request_json["method"].get<std::string>()
                 : "";
 
-        // Only the "query" method carries game_data/game_data_v1. Other
-        // methods are proxied untouched so the bridge stays transparent.
+        // The dashboards only need "query". Rejecting other methods prevents a
+        // local web page from using the bridge to drive arbitrary SimPro RPCs.
         if (method != "query") {
-            if (simpro_body.has_value()) {
-                response.status = 200;
-                response.set_content(*simpro_body, "application/json");
-                return;
-            }
             nlohmann::json error;
             error["jsonrpc"] = "2.0";
             if (request_json.contains("id")) {
@@ -175,9 +195,8 @@ struct BridgeService::Impl {
             } else {
                 error["id"] = 1;
             }
-            error["error"] = {{"code", -32000},
-                              {"message", "SimPro Manager is not available"}};
-            response.status = 503;
+            error["error"] = {{"code", -32601}, {"message", "method not allowed"}};
+            response.status = 403;
             response.set_content(error.dump(), "application/json");
             return;
         }
@@ -185,6 +204,11 @@ struct BridgeService::Impl {
         nlohmann::json simpro = nlohmann::json::object();
         if (simpro_body.has_value()) {
             simpro = parse_or_object(*simpro_body);
+        }
+        if (simpro.contains("error")) {
+            response.status = 200;
+            response.set_content(simpro.dump(), "application/json");
+            return;
         }
 
         const LmuSnapshot value = get_snapshot();
@@ -199,8 +223,8 @@ struct BridgeService::Impl {
         response.set_content(result.dump(), "application/json");
     }
 
-    void handle_status(const httplib::Request&, httplib::Response& response) {
-        set_cors(response);
+    void handle_status(const httplib::Request& request, httplib::Response& response) {
+        set_cors(request, response);
         const LmuSnapshot value = get_snapshot();
         nlohmann::json status;
         status["running"] = running.load();
@@ -235,9 +259,14 @@ struct BridgeService::Impl {
                                        httplib::Response& response) {
             handle_jsonrpc(request, response);
         });
-        server.Options("/jsonrpc", [](const httplib::Request&,
+        server.Options("/jsonrpc", [](const httplib::Request& request,
                                       httplib::Response& response) {
-            set_cors(response);
+            set_cors(request, response);
+            response.status = 204;
+        });
+        server.Options("/status", [](const httplib::Request& request,
+                                     httplib::Response& response) {
+            set_cors(request, response);
             response.status = 204;
         });
         server.Get("/status", [this](const httplib::Request& request,
@@ -267,6 +296,7 @@ struct BridgeService::Impl {
 
         running.store(true);
         server_thread = std::thread([this]() { server.listen_after_bind(); });
+        server.wait_until_ready();
         reader_thread = std::thread([this]() { reader_loop(); });
         return true;
     }

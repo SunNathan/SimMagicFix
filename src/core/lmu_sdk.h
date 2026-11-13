@@ -9,7 +9,6 @@
 #include <optional>
 #include <utility>
 
-#define _CRT_SECURE_NO_WARNINGS
 #pragma warning(push, 0)
 #include "SharedMemoryInterface.hpp"
 #pragma warning(pop)

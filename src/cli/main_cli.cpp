@@ -197,9 +197,19 @@ int main(int argc, char** argv) {
             if (args[i] == "--mock") {
                 options.mock = true;
             } else if (args[i] == "--port" && i + 1 < args.size()) {
-                options.port = std::stoi(args[++i]);
+                try {
+                    options.port = std::stoi(args[++i]);
+                } catch (...) {
+                    std::cout << "Invalid --port value\n";
+                    return 1;
+                }
             } else if (args[i] == "--simpro-port" && i + 1 < args.size()) {
-                options.simpro_port = std::stoi(args[++i]);
+                try {
+                    options.simpro_port = std::stoi(args[++i]);
+                } catch (...) {
+                    std::cout << "Invalid --simpro-port value\n";
+                    return 1;
+                }
             }
         }
         simagicfix::BridgeService bridge(options);

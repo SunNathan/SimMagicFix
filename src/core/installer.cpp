@@ -4,6 +4,8 @@
 #include "core/paths.h"
 #include "core/state.h"
 
+#include <set>
+
 namespace simagicfix {
 
 namespace {
@@ -11,7 +13,13 @@ namespace {
 bool ensure_directories() {
     std::error_code ec;
     fs::create_directories(app_data_dir(), ec);
+    if (ec) {
+        return false;
+    }
     fs::create_directories(logs_dir(), ec);
+    if (ec) {
+        return false;
+    }
     fs::create_directories(backups_dir(), ec);
     return !ec;
 }
@@ -25,8 +33,9 @@ void append_patched(AppState& state, const DashPatchResult& result) {
     if (!result.ok || result.applied.empty()) {
         return;
     }
+    const std::string file = path_to_utf8(result.file);
     for (auto& existing : state.patched) {
-        if (existing.file == result.file.string()) {
+        if (existing.file == file) {
             existing.name = result.name;
             existing.backup = result.backup;
             existing.original_crc = result.original_crc;
@@ -36,7 +45,7 @@ void append_patched(AppState& state, const DashPatchResult& result) {
         }
     }
     PatchedDashboard dash;
-    dash.file = result.file.string();
+    dash.file = file;
     dash.name = result.name;
     dash.backup = result.backup;
     dash.original_crc = result.original_crc;
@@ -54,12 +63,14 @@ bool install_self(const fs::path& target) {
     }
     fs::path source = current_exe_path();
     // When the CLI is used to install, prefer the GUI executable sitting next
-    // to it so the installed program is the user-facing one.
+    // to it so the installed program is the user-facing one. Never install the
+    // console binary under the GUI name.
     if (source.filename() == L"SimagicFixCLI.exe") {
         const fs::path gui = source.parent_path() / L"SimagicFix.exe";
-        if (fs::is_regular_file(gui, ec)) {
-            source = gui;
+        if (!fs::is_regular_file(gui, ec)) {
+            return false;
         }
+        source = gui;
     }
     fs::create_directories(target.parent_path(), ec);
     fs::copy_file(source, target, fs::copy_options::overwrite_existing, ec);
@@ -82,7 +93,9 @@ InstallReport install(const InstallOptions& options) {
     state.auto_start = options.auto_start;
     state.bridge_port = 56799;
     state.version = "0.1.0";
-    state.install_date = now_string();
+    if (state.install_date.empty()) {
+        state.install_date = now_string();
+    }
 
     for (const auto& dashboard : options.dashboards) {
         if (!fs::is_regular_file(dashboard)) {
@@ -91,10 +104,14 @@ InstallReport install(const InstallOptions& options) {
         DashPatchResult result = patch_dashboard(dashboard);
         report.patched.push_back(result);
         if (!result.ok) {
+            // Persist what was already patched so Uninstall/Restore can still
+            // revert it.
+            save_state(state);
             report.error = result.error;
             return report;
         }
         append_patched(state, result);
+        save_state(state);
     }
 
     save_state(state);
@@ -113,8 +130,16 @@ InstallReport repair() {
     AppState state = load_state();
     InstallOptions options;
     options.auto_start = state.auto_start;
+    std::set<std::string> seen;
+    for (const auto& dashboard : state.patched) {
+        if (seen.insert(dashboard.file).second) {
+            options.dashboards.push_back(utf8_to_path(dashboard.file));
+        }
+    }
     for (const auto& dashboard : scan_dashboards()) {
-        if (dashboard.compatible || dashboard.already_patched) {
+        const std::string file = path_to_utf8(dashboard.file);
+        if (dashboard.compatible && is_lmu_dashboard_name(dashboard.name) &&
+            seen.insert(file).second) {
             options.dashboards.push_back(dashboard.file);
         }
     }

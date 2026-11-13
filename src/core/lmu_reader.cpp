@@ -65,12 +65,18 @@ bool LmuReader::read(LmuSnapshot& snapshot) {
         impl_->waiter->WaitForNextFrame(20);
     }
 
+    bool locked = false;
     if (impl_->lock.has_value()) {
-        impl_->lock->Lock();
+        locked = impl_->lock->Lock(50);
+        if (!locked) {
+            // Another consumer is stuck; skip this sample instead of blocking
+            // the bridge (and the whole application) forever.
+            return false;
+        }
     }
     std::memcpy(impl_->telemetry.get(), &impl_->view->data.telemetry,
                 sizeof(SharedMemoryTelemetryData));
-    if (impl_->lock.has_value()) {
+    if (locked) {
         impl_->lock->Unlock();
     }
 
