@@ -1,0 +1,17 @@
+build/
+out/
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.exp
+logs/
+backups/
+state.json

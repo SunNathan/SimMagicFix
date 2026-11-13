@@ -1,0 +1,74 @@
+#include "core/state.h"
+
+#include "core/paths.h"
+#include "json.hpp"
+
+namespace simagicfix {
+
+AppState load_state() {
+    AppState state;
+    const fs::path path = state_path();
+    std::error_code ec;
+    if (!fs::is_regular_file(path, ec)) {
+        return state;
+    }
+    try {
+        std::ifstream input(path);
+        nlohmann::json json;
+        input >> json;
+        state.installed = json.value("installed", false);
+        state.auto_start = json.value("auto_start", false);
+        state.bridge_port = json.value("bridge_port", 56799);
+        state.version = json.value("version", "");
+        state.install_date = json.value("install_date", "");
+        if (json.contains("patched") && json["patched"].is_array()) {
+            for (const auto& item : json["patched"]) {
+                PatchedDashboard dash;
+                dash.file = item.value("file", "");
+                dash.name = item.value("name", "");
+                dash.backup = item.value("backup", "");
+                dash.original_crc = item.value("original_crc", 0u);
+                dash.patched_crc = item.value("patched_crc", 0u);
+                if (item.contains("fixes") && item["fixes"].is_array()) {
+                    for (const auto& fix : item["fixes"]) {
+                        dash.fixes.push_back(fix.get<std::string>());
+                    }
+                }
+                state.patched.push_back(std::move(dash));
+            }
+        }
+    } catch (...) {
+        return AppState{};
+    }
+    return state;
+}
+
+bool save_state(const AppState& state) {
+    std::error_code ec;
+    fs::create_directories(app_data_dir(), ec);
+    nlohmann::json json;
+    json["installed"] = state.installed;
+    json["auto_start"] = state.auto_start;
+    json["bridge_port"] = state.bridge_port;
+    json["version"] = state.version;
+    json["install_date"] = state.install_date;
+    json["patched"] = nlohmann::json::array();
+    for (const auto& dash : state.patched) {
+        nlohmann::json item;
+        item["file"] = dash.file;
+        item["name"] = dash.name;
+        item["backup"] = dash.backup;
+        item["original_crc"] = dash.original_crc;
+        item["patched_crc"] = dash.patched_crc;
+        item["fixes"] = dash.fixes;
+        json["patched"].push_back(std::move(item));
+    }
+    std::ofstream output(state_path());
+    if (!output) {
+        return false;
+    }
+    output << json.dump(2);
+    return output.good();
+}
+
+}  // namespace simagicfix
