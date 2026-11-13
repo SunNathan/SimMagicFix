@@ -15,3 +15,5 @@ out/
 logs/
 backups/
 state.json
+
+console.log
