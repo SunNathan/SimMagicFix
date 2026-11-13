@@ -900,8 +900,8 @@ void show_tray_menu(HWND hwnd) {
     AppendMenuW(menu, MF_STRING, IDM_OPEN, L"Ouvrir SimagicFix");
     AppendMenuW(menu, MF_STRING, IDM_TEST, L"Tester les valeurs");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, IDM_REPAIR, L"Reparer");
-    AppendMenuW(menu, MF_STRING, IDM_RESTORE, L"Restaurer les dashboards");
+    AppendMenuW(menu, MF_STRING, IDM_REPAIR, L"Appliquer la selection");
+    AppendMenuW(menu, MF_STRING, IDM_RESTORE, L"Restaurer la selection");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (is_autostart_enabled() ? MF_CHECKED : 0),
                 IDM_AUTOSTART, L"Demarrage automatique");
