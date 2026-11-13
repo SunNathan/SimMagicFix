@@ -127,6 +127,10 @@ L'icône est générée par `tools/make_icon.py` (Pillow, uniquement au build) e
 - Le correctif ne fonctionne que si l'application (le bridge) est lancée.
 - L'exécutable n'est pas signé : Windows SmartScreen peut afficher un avertissement.
 
+## Licence
+
+MIT. Voir `LICENSE`. L'utilisation commerciale est autorisée par la licence MIT.
+
 ## Architecture
 
 - C++20, CMake, Win32 natif.

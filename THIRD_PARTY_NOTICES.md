@@ -54,6 +54,13 @@ unofficial and not affiliated with Simagic.
 The icon was generated at build time with Pillow (development-only dependency,
 not required at runtime). No font file is redistributed.
 
+## LMU SDK fallback header
+
+`third_party/lmu_sdk/SharedMemoryInterface.hpp` is a clean-room,
+ABI-compatible header written for this project. It does not contain or
+redistribute the official Le Mans Ultimate SDK header. It is used when the
+official SDK is not available (for example in CI).
+
 ## Le Mans Ultimate SDK
 
 The project includes `SharedMemoryInterface.hpp` / `InternalsPlugin.hpp` from the

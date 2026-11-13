@@ -17,3 +17,5 @@ backups/
 state.json
 
 console.log
+
+build-ci/

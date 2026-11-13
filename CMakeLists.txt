@@ -26,6 +26,13 @@ if(NOT LMU_SDK_DIR)
     endif()
   endforeach()
 endif()
+
+# Fallback used by CI and machines without Le Mans Ultimate installed.
+if(NOT LMU_SDK_DIR AND EXISTS "${CMAKE_SOURCE_DIR}/third_party/lmu_sdk/SharedMemoryInterface.hpp")
+  set(LMU_SDK_DIR "${CMAKE_SOURCE_DIR}/third_party/lmu_sdk"
+      CACHE PATH "Path to Le Mans Ultimate Support/SharedMemoryInterface" FORCE)
+  message(STATUS "LMU SDK: using clean-room fallback header")
+endif()
 if(NOT LMU_SDK_DIR OR NOT EXISTS "${LMU_SDK_DIR}/SharedMemoryInterface.hpp")
   message(FATAL_ERROR
     "LMU SDK not found. Configure with -DLMU_SDK_DIR=\"C:/.../Le Mans Ultimate/Support/SharedMemoryInterface\"")
