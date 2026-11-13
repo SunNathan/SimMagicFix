@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(SimagicFix VERSION 0.1.0 LANGUAGES C CXX)
+project(SimagicFix VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -52,7 +52,6 @@ add_library(simagicfix_core STATIC
   src/core/merge.cpp
   src/core/bridge.cpp
   src/core/simpro_memory.cpp
-  src/core/dash_patcher.cpp
   src/core/autostart.cpp
   src/core/installer.cpp
 )

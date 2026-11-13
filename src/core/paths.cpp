@@ -238,13 +238,9 @@ fs::path local_app_data() {
 
 fs::path app_data_dir() { return local_app_data() / L"SimagicFix"; }
 fs::path logs_dir() { return app_data_dir() / L"logs"; }
-fs::path backups_dir() { return app_data_dir() / L"backups"; }
 fs::path state_path() { return app_data_dir() / L"state.json"; }
 
 fs::path simagic_config_dir() { return local_app_data() / L"Simagic" / L"config"; }
-fs::path dashboard_dir() {
-    return simagic_config_dir() / L"dash" / L"offical_dash" / L"dashboard";
-}
 fs::path simagic_appconfig_path() { return simagic_config_dir() / L"appconfig.json"; }
 
 fs::path simpro_exe_path() {

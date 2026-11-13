@@ -1,6 +1,5 @@
 #include "core/autostart.h"
 #include "core/bridge.h"
-#include "core/dash_patcher.h"
 #include "core/installer.h"
 #include "core/paths.h"
 #include "core/simpro_memory.h"
@@ -11,6 +10,7 @@
 #include <shellapi.h>
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cwchar>
 #include <functional>
@@ -36,23 +36,16 @@ enum ControlId {
     IDC_TITLE = 100,
     IDC_STATUS_SIMPRO,
     IDC_STATUS_LMU,
-    IDC_STATUS_DASH,
     IDC_STATUS_BRIDGE,
-    IDC_DASH_LIST,
+    IDC_STATUS_MEMORY,
     IDC_AUTOSTART,
     IDC_PROGRESS,
     IDC_INSTALL,
     IDC_CANCEL,
     IDC_TEST,
-    IDC_REPAIR,
-    IDC_RESTORE,
     IDC_LOGS,
     IDC_QUIT,
     IDC_UNINSTALL,
-    IDC_SELECT_ALL,
-    IDC_SELECT_LMU,
-    IDC_SELECT_NONE,
-    IDC_REFRESH,
     IDC_MEMORY_PATCH,
     IDC_TEST_SOURCE,
     IDC_TEST_TC,
@@ -64,13 +57,11 @@ enum ControlId {
     IDC_TEST_CLOSE,
 };
 
-enum class TaskKind { None, Install, Repair, Restore, Scan };
+enum class TaskKind { None, Install };
 
 enum MenuId {
     IDM_OPEN = 200,
     IDM_TEST,
-    IDM_REPAIR,
-    IDM_RESTORE,
     IDM_AUTOSTART,
     IDM_LOGS,
     IDM_UNINSTALL,
@@ -81,25 +72,18 @@ struct App {
     HINSTANCE instance = nullptr;
     HWND main = nullptr;
     HWND test = nullptr;
-    HWND list = nullptr;
     HWND status_simpro = nullptr;
     HWND status_lmu = nullptr;
-    HWND status_dash = nullptr;
     HWND status_bridge = nullptr;
+    HWND status_memory = nullptr;
     HWND autostart = nullptr;
     HWND progress = nullptr;
     HWND install = nullptr;
     HWND cancel = nullptr;
     HWND test_button = nullptr;
-    HWND repair_button = nullptr;
-    HWND restore_button = nullptr;
     HWND logs_button = nullptr;
     HWND quit_button = nullptr;
     HWND uninstall_button = nullptr;
-    HWND select_all_button = nullptr;
-    HWND select_lmu_button = nullptr;
-    HWND select_none_button = nullptr;
-    HWND refresh_button = nullptr;
     HWND memory_patch_checkbox = nullptr;
 
     HFONT font = nullptr;
@@ -107,13 +91,9 @@ struct App {
     HFONT value_font = nullptr;
 
     AppState state;
-    std::vector<DashScanResult> scan;
-    bool scan_done = false;
-    bool scanning = false;
     bool installed = false;
     bool tray_only = false;
     bool quitting = false;
-    bool simpro_was_running = false;
 
     std::unique_ptr<BridgeService> bridge;
     std::unique_ptr<SimProMemoryPatcher> memory_patcher;
@@ -158,31 +138,6 @@ void set_font(HWND control, HFONT font) {
     if (control != nullptr && font != nullptr) {
         SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     }
-}
-
-size_t checked_count() {
-    if (g_app.list == nullptr || ListView_GetItemCount(g_app.list) == 0) {
-        return g_app.state.selection.size();
-    }
-    size_t count = 0;
-    const int items = ListView_GetItemCount(g_app.list);
-    for (int i = 0; i < items; ++i) {
-        if (ListView_GetCheckState(g_app.list, i)) {
-            ++count;
-        }
-    }
-    return count;
-}
-
-std::string join_fixes(const std::vector<std::string>& fixes) {
-    std::string result;
-    for (size_t i = 0; i < fixes.size(); ++i) {
-        if (i != 0) {
-            result += ", ";
-        }
-        result += fixes[i];
-    }
-    return result;
 }
 
 void start_memory_patcher() {
@@ -300,28 +255,6 @@ void refresh_status() {
              lmu.empty() ? "Le Mans Ultimate : non detecte"
                          : "Le Mans Ultimate : detecte");
 
-    size_t compatible = 0;
-    size_t patched = 0;
-    for (const auto& item : g_app.scan) {
-        if (item.compatible) {
-            ++compatible;
-        }
-        if (item.already_patched) {
-            ++patched;
-        }
-    }
-    if (g_app.scanning) {
-        set_text(g_app.status_dash, "Scan des dashboards...");
-    } else if (g_app.installed) {
-        const size_t count = g_app.scan.empty() ? g_app.state.patched.size() : patched;
-        set_text(g_app.status_dash,
-                 "Dashboards corriges : " + std::to_string(count) +
-                     "  -  selection : " + std::to_string(checked_count()));
-    } else {
-        set_text(g_app.status_dash,
-                 "Dashboards compatibles : " + std::to_string(compatible));
-    }
-
     std::string bridge_text = "Bridge : ";
     if (g_app.bridge && g_app.bridge->running()) {
         bridge_text += "actif (port " + std::to_string(g_app.bridge->port()) + ")";
@@ -331,12 +264,17 @@ void refresh_status() {
     } else {
         bridge_text += "inactif";
     }
-    if (g_app.memory_patcher && g_app.memory_patcher->running()) {
-        bridge_text += g_app.memory_patcher->available()
-                           ? " - patch memoire actif"
-                           : " - patch memoire en attente";
-    }
     set_text(g_app.status_bridge, bridge_text);
+
+    std::string memory_text = "Patch memoire : ";
+    if (g_app.memory_patcher && g_app.memory_patcher->running()) {
+        memory_text += g_app.memory_patcher->available()
+                           ? "actif"
+                           : "en attente (SimPro non detecte)";
+    } else {
+        memory_text += "arrete";
+    }
+    set_text(g_app.status_memory, memory_text);
 
     if (g_app.memory_patch_checkbox != nullptr && g_app.installed) {
         SendMessageW(g_app.memory_patch_checkbox, BM_SETCHECK,
@@ -358,107 +296,20 @@ void refresh_status() {
     update_tray();
 }
 
-void populate_list() {
-    if (g_app.list == nullptr) {
-        return;
-    }
-    ListView_DeleteAllItems(g_app.list);
-    int row = 0;
-    for (const auto& item : g_app.scan) {
-        const std::wstring name = w(item.name);
-        LVITEMW lv{};
-        lv.mask = LVIF_TEXT;
-        lv.iItem = row;
-        lv.pszText = const_cast<wchar_t*>(name.c_str());
-        const int index = ListView_InsertItem(g_app.list, &lv);
-
-        const std::string status_text =
-            item.already_patched ? "Patché"
-                                 : (item.compatible ? "À patcher" : "Non compatible");
-        const std::wstring status_w = w(status_text);
-        ListView_SetItemText(g_app.list, index, 1,
-                             const_cast<wchar_t*>(status_w.c_str()));
-
-        const std::string detail = join_fixes(item.fixes);
-        const std::wstring detail_w = w(detail);
-        ListView_SetItemText(g_app.list, index, 2,
-                             const_cast<wchar_t*>(detail_w.c_str()));
-
-        bool checked = false;
-        const std::string file = path_to_utf8(item.file);
-        if (!g_app.state.selection.empty()) {
-            checked = std::find(g_app.state.selection.begin(),
-                                g_app.state.selection.end(),
-                                file) != g_app.state.selection.end();
-        } else {
-            checked = item.already_patched || is_lmu_dashboard_name(item.name);
-        }
-        ListView_SetItemState(g_app.list, index,
-                              INDEXTOSTATEIMAGEMASK(checked ? 2 : 1),
-                              LVIS_STATEIMAGEMASK);
-        ++row;
-    }
-}
-
-std::vector<fs::path> saved_selection_paths() {
-    std::vector<fs::path> paths;
-    for (const auto& path : g_app.state.selection) {
-        paths.push_back(utf8_to_path(path));
-    }
-    return paths;
-}
-
-std::vector<fs::path> read_selection() {
-    std::vector<fs::path> paths;
-    std::vector<std::string> selected;
-    if (g_app.list != nullptr) {
-        const int count = ListView_GetItemCount(g_app.list);
-        for (int i = 0; i < count && static_cast<size_t>(i) < g_app.scan.size(); ++i) {
-            if (ListView_GetCheckState(g_app.list, i)) {
-                paths.push_back(g_app.scan[static_cast<size_t>(i)].file);
-                selected.push_back(path_to_utf8(g_app.scan[static_cast<size_t>(i)].file));
-            }
-        }
-    }
-    g_app.state.selection = std::move(selected);
-    save_state(g_app.state);
-    return paths;
-}
-
-void set_all_checks(int mode) {
-    if (g_app.list == nullptr) {
-        return;
-    }
-    const int count = ListView_GetItemCount(g_app.list);
-    for (int i = 0; i < count && static_cast<size_t>(i) < g_app.scan.size(); ++i) {
-        const bool lmu = is_lmu_dashboard_name(g_app.scan[static_cast<size_t>(i)].name);
-        const bool checked = mode == 0 ? true : (mode == 1 ? lmu : false);
-        ListView_SetItemState(g_app.list, i,
-                              INDEXTOSTATEIMAGEMASK(checked ? 2 : 1),
-                              LVIS_STATEIMAGEMASK);
-    }
-    read_selection();
-}
-
 void switch_mode(bool installed) {
     g_app.installed = installed;
     const int show_install = installed ? SW_HIDE : SW_SHOW;
     const int show_manage = installed ? SW_SHOW : SW_HIDE;
-    ShowWindow(g_app.list, SW_SHOW);
-    ShowWindow(g_app.select_all_button, SW_SHOW);
-    ShowWindow(g_app.select_lmu_button, SW_SHOW);
-    ShowWindow(g_app.select_none_button, SW_SHOW);
-    ShowWindow(g_app.refresh_button, SW_SHOW);
     ShowWindow(g_app.install, show_install);
     ShowWindow(g_app.cancel, show_install);
     ShowWindow(g_app.test_button, show_manage);
-    ShowWindow(g_app.repair_button, show_manage);
-    ShowWindow(g_app.restore_button, show_manage);
     ShowWindow(g_app.logs_button, show_manage);
     ShowWindow(g_app.quit_button, show_manage);
     ShowWindow(g_app.uninstall_button, show_manage);
     ShowWindow(g_app.memory_patch_checkbox, show_manage);
-    SetWindowTextW(g_app.main, installed ? L"SimagicFix" : L"SimagicFix - installation");
+    ShowWindow(g_app.status_memory, show_manage);
+    SetWindowTextW(g_app.main,
+                   installed ? L"SimagicFix" : L"SimagicFix - installation");
     refresh_status();
 }
 
@@ -598,8 +449,6 @@ LRESULT CALLBACK test_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
     }
 }
 
-void ensure_scan(bool force);
-
 void run_task(TaskKind kind, std::function<void()> task) {
     if (g_app.task_running) {
         return;
@@ -609,15 +458,9 @@ void run_task(TaskKind kind, std::function<void()> task) {
     g_app.task_ok = false;
     g_app.task_message.clear();
     EnableWindow(g_app.install, FALSE);
-    EnableWindow(g_app.repair_button, FALSE);
-    EnableWindow(g_app.restore_button, FALSE);
     EnableWindow(g_app.uninstall_button, FALSE);
     EnableWindow(g_app.quit_button, FALSE);
     EnableWindow(g_app.cancel, FALSE);
-    EnableWindow(g_app.select_all_button, FALSE);
-    EnableWindow(g_app.select_lmu_button, FALSE);
-    EnableWindow(g_app.select_none_button, FALSE);
-    EnableWindow(g_app.refresh_button, FALSE);
     ShowWindow(g_app.progress, SW_SHOW);
     SendMessageW(g_app.progress, PBM_SETMARQUEE, TRUE, 30);
     g_app.task_thread = std::thread([task = std::move(task)]() {
@@ -642,104 +485,27 @@ void finish_task() {
     ShowWindow(g_app.progress, SW_HIDE);
     SendMessageW(g_app.progress, PBM_SETMARQUEE, FALSE, 0);
     EnableWindow(g_app.install, TRUE);
-    EnableWindow(g_app.repair_button, TRUE);
-    EnableWindow(g_app.restore_button, TRUE);
     EnableWindow(g_app.uninstall_button, TRUE);
     EnableWindow(g_app.quit_button, TRUE);
     EnableWindow(g_app.cancel, TRUE);
-    EnableWindow(g_app.select_all_button, TRUE);
-    EnableWindow(g_app.select_lmu_button, TRUE);
-    EnableWindow(g_app.select_none_button, TRUE);
-    EnableWindow(g_app.refresh_button, TRUE);
-
-    if (g_app.simpro_was_running) {
-        start_process(simpro_exe_path());
-        g_app.simpro_was_running = false;
-    }
 
     if (g_app.task_kind == TaskKind::Install) {
         if (g_app.task_ok) {
             g_app.state = load_state();
-            g_app.scan.clear();
             start_bridge();
             switch_mode(true);
             add_tray(g_app.main);
             update_tray();
             MessageBoxW(g_app.main,
-                        L"Correctif installe.\nLe bridge est actif et les "
-                        L"dashboards compatibles ont ete corriges.",
+                        L"SimagicFix installe.\nLe bridge est actif.",
                         L"SimagicFix", MB_ICONINFORMATION);
         } else {
             MessageBoxW(g_app.main, w("Installation echouee : " + g_app.task_message).c_str(),
                         L"SimagicFix", MB_ICONERROR);
         }
-    } else if (g_app.task_kind == TaskKind::Repair) {
-        g_app.state = load_state();
-        g_app.scan.clear();
-        refresh_status();
-        MessageBoxW(g_app.main,
-                    g_app.task_ok ? L"Dashboards repares." : L"Reparation echouee.",
-                    L"SimagicFix", g_app.task_ok ? MB_ICONINFORMATION : MB_ICONERROR);
-    } else if (g_app.task_kind == TaskKind::Restore) {
-        g_app.state = load_state();
-        g_app.scan.clear();
-        refresh_status();
-        MessageBoxW(g_app.main,
-                    g_app.task_ok ? L"Dashboards restaures." : L"Restauration echouee.",
-                    L"SimagicFix", g_app.task_ok ? MB_ICONINFORMATION : MB_ICONERROR);
-    } else if (g_app.task_kind == TaskKind::Scan) {
-        populate_list();
-        refresh_status();
     }
 
-    const TaskKind finished_kind = g_app.task_kind;
     g_app.task_kind = TaskKind::None;
-    if (finished_kind != TaskKind::None && finished_kind != TaskKind::Scan) {
-        ensure_scan(true);
-    }
-}
-
-void ensure_scan(bool force) {
-    if (g_app.task_running) {
-        return;
-    }
-    if (!force && g_app.scan_done) {
-        return;
-    }
-    g_app.scanning = true;
-    set_text(g_app.status_dash, "Scan des dashboards...");
-    run_task(TaskKind::Scan, []() {
-        try {
-            g_app.scan = scan_dashboards();
-        } catch (...) {
-            g_app.scan.clear();
-        }
-        g_app.scan_done = true;
-        g_app.scanning = false;
-    });
-}
-
-bool prepare_simpro_for_patch() {
-    g_app.simpro_was_running = process_running(L"simpro.exe");
-    if (!g_app.simpro_was_running) {
-        return true;
-    }
-    const int answer = MessageBoxW(
-        g_app.main,
-        L"SimPro Manager est ouvert.\n"
-        L"Le fermer pour appliquer le correctif, puis le relancer ?",
-        L"SimagicFix", MB_YESNO | MB_ICONQUESTION);
-    if (answer != IDYES) {
-        return false;
-    }
-    if (!close_process(L"simpro.exe")) {
-        MessageBoxW(g_app.main,
-                    L"Impossible de fermer SimPro Manager. Ferme-le "
-                    L"manuellement puis reessaie.",
-                    L"SimagicFix", MB_ICONERROR);
-        return false;
-    }
-    return true;
 }
 
 void start_install() {
@@ -749,93 +515,13 @@ void start_install() {
     InstallOptions options;
     options.auto_start =
         SendMessageW(g_app.autostart, BM_GETCHECK, 0, 0) == BST_CHECKED;
-    options.dashboards = read_selection();
-    if (options.dashboards.empty()) {
-        MessageBoxW(g_app.main,
-                    L"Selectionne au moins un dashboard dans la liste.",
-                    L"SimagicFix", MB_ICONINFORMATION);
-        return;
-    }
 
-    if (!prepare_simpro_for_patch()) {
-        return;
-    }
-
-    log_line("Install requested with " + std::to_string(options.dashboards.size()) +
-             " dashboards");
+    log_line("Install requested");
     run_task(TaskKind::Install, [options]() {
         const InstallReport report = install(options);
         g_app.task_ok = report.ok;
         g_app.task_message = report.ok ? "" : report.error;
         log_line(report.ok ? "Install OK" : "Install failed: " + report.error);
-    });
-}
-
-void start_repair() {
-    if (!g_app.installed || g_app.task_running) {
-        return;
-    }
-    std::vector<fs::path> selected;
-    if (g_app.list != nullptr && ListView_GetItemCount(g_app.list) > 0) {
-        selected = read_selection();
-    } else {
-        selected = saved_selection_paths();
-    }
-    if (selected.empty()) {
-        MessageBoxW(g_app.main,
-                    L"Selectionne au moins un dashboard dans la liste.",
-                    L"SimagicFix", MB_ICONINFORMATION);
-        ensure_scan(true);
-        return;
-    }
-    if (!prepare_simpro_for_patch()) {
-        return;
-    }
-    InstallOptions options;
-    options.auto_start =
-        SendMessageW(g_app.autostart, BM_GETCHECK, 0, 0) == BST_CHECKED;
-    options.dashboards = std::move(selected);
-    run_task(TaskKind::Repair, [options]() {
-        const InstallReport report = install(options);
-        g_app.task_ok = report.ok;
-        g_app.task_message = report.ok ? "" : report.error;
-        log_line(report.ok ? "Apply selection OK" : "Apply selection failed: " + report.error);
-    });
-}
-
-void start_restore() {
-    if (g_app.task_running) {
-        return;
-    }
-    std::vector<fs::path> selected;
-    if (g_app.list != nullptr && ListView_GetItemCount(g_app.list) > 0) {
-        selected = read_selection();
-    } else {
-        selected = saved_selection_paths();
-    }
-    if (selected.empty()) {
-        MessageBoxW(g_app.main,
-                    L"Selectionne au moins un dashboard dans la liste.",
-                    L"SimagicFix", MB_ICONINFORMATION);
-        ensure_scan(true);
-        return;
-    }
-    const std::wstring message =
-        L"Restaurer les " + std::to_wstring(selected.size()) +
-        L" dashboards selectionnes ?\n"
-        L"Les autres dashboards resteront patches.";
-    const int answer = MessageBoxW(g_app.main, message.c_str(), L"SimagicFix",
-                                   MB_YESNO | MB_ICONQUESTION);
-    if (answer != IDYES) {
-        return;
-    }
-    if (!prepare_simpro_for_patch()) {
-        return;
-    }
-    run_task(TaskKind::Restore, [selected]() {
-        g_app.task_ok = restore_selected(selected);
-        g_app.task_message = "";
-        log_line(g_app.task_ok ? "Restore selection OK" : "Restore selection failed");
     });
 }
 
@@ -846,24 +532,17 @@ void do_uninstall() {
     const int answer = MessageBoxW(
         g_app.main,
         L"Desinstaller SimagicFix ?\n\n"
-        L"- les dashboards d'origine seront restaures\n"
+        L"- le bridge et le patch memoire seront arretes\n"
         L"- le demarrage automatique sera retire\n"
         L"- le raccourci du menu Demarrer sera supprime",
         L"SimagicFix", MB_YESNO | MB_ICONWARNING);
     if (answer != IDYES) {
         return;
     }
-    if (!prepare_simpro_for_patch()) {
-        return;
-    }
     stop_bridge();
-    const bool restored = uninstall(true);
-    if (g_app.simpro_was_running) {
-        start_process(simpro_exe_path());
-        g_app.simpro_was_running = false;
-    }
+    const bool ok = uninstall();
     remove_tray();
-    log_line(restored ? "Uninstall completed" : "Uninstall completed with restore errors");
+    log_line(ok ? "Uninstall completed" : "Uninstall completed with errors");
     std::error_code ec;
     const bool running_installed =
         fs::equivalent(current_exe_path(), installed_exe_path(), ec);
@@ -871,13 +550,9 @@ void do_uninstall() {
         schedule_delete_self();
     }
     MessageBoxW(g_app.main,
-                restored
-                    ? L"SimagicFix a ete desinstalle. Les dashboards ont ete restaures."
-                    : L"SimagicFix a ete desinstalle, mais certains dashboards "
-                      L"n'ont pas pu etre restaures. Les sauvegardes restent dans "
-                      L"%LOCALAPPDATA%\\SimagicFix\\backups.",
+                L"SimagicFix a ete desinstalle.",
                 L"SimagicFix",
-                restored ? MB_ICONINFORMATION : MB_ICONWARNING);
+                ok ? MB_ICONINFORMATION : MB_ICONWARNING);
     g_app.quitting = true;
     DestroyWindow(g_app.main);
 }
@@ -902,22 +577,6 @@ void handle_menu(int id) {
         case IDM_TEST:
             show_test();
             break;
-        case IDM_REPAIR:
-            if (g_app.state.selection.empty()) {
-                show_main();
-                ensure_scan(true);
-            } else {
-                start_repair();
-            }
-            break;
-        case IDM_RESTORE:
-            if (g_app.state.selection.empty()) {
-                show_main();
-                ensure_scan(true);
-            } else {
-                start_restore();
-            }
-            break;
         case IDM_AUTOSTART:
             toggle_autostart();
             break;
@@ -940,9 +599,6 @@ void show_tray_menu(HWND hwnd) {
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, IDM_OPEN, L"Ouvrir SimagicFix");
     AppendMenuW(menu, MF_STRING, IDM_TEST, L"Tester les valeurs");
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, IDM_REPAIR, L"Appliquer la selection");
-    AppendMenuW(menu, MF_STRING, IDM_RESTORE, L"Restaurer la selection");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (is_autostart_enabled() ? MF_CHECKED : 0),
                 IDM_AUTOSTART, L"Demarrage automatique");
@@ -995,8 +651,8 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             } statuses[] = {
                 {IDC_STATUS_SIMPRO, L"SimPro Manager : ...", 56},
                 {IDC_STATUS_LMU, L"Le Mans Ultimate : ...", 82},
-                {IDC_STATUS_DASH, L"Dashboards compatibles : ...", 108},
-                {IDC_STATUS_BRIDGE, L"Bridge : ...", 134},
+                {IDC_STATUS_BRIDGE, L"Bridge : ...", 108},
+                {IDC_STATUS_MEMORY, L"Patch memoire : ...", 134},
             };
             for (const auto& status : statuses) {
                 HWND control = CreateWindowExW(
@@ -1009,59 +665,17 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                     g_app.status_simpro = control;
                 } else if (status.id == IDC_STATUS_LMU) {
                     g_app.status_lmu = control;
-                } else if (status.id == IDC_STATUS_DASH) {
-                    g_app.status_dash = control;
-                } else {
+                } else if (status.id == IDC_STATUS_BRIDGE) {
                     g_app.status_bridge = control;
+                } else {
+                    g_app.status_memory = control;
                 }
             }
-
-            g_app.list = CreateWindowExW(
-                WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
-                WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL |
-                    LVS_SHOWSELALWAYS,
-                20, 166, 600, 200, hwnd, reinterpret_cast<HMENU>(IDC_DASH_LIST),
-                g_app.instance, nullptr);
-            ListView_SetExtendedListViewStyle(
-                g_app.list, LVS_EX_FULLROWSELECT | LVS_EX_CHECKBOXES);
-            LVCOLUMNW column{};
-            column.mask = LVCF_TEXT | LVCF_WIDTH;
-            column.pszText = const_cast<wchar_t*>(L"Dashboard");
-            column.cx = 200;
-            ListView_InsertColumn(g_app.list, 0, &column);
-            column.pszText = const_cast<wchar_t*>(L"Etat");
-            column.cx = 100;
-            ListView_InsertColumn(g_app.list, 1, &column);
-            column.pszText = const_cast<wchar_t*>(L"Valeurs corrigees");
-            column.cx = 280;
-            ListView_InsertColumn(g_app.list, 2, &column);
-            set_font(g_app.list, g_app.font);
-
-            g_app.select_all_button = CreateWindowExW(
-                0, L"BUTTON", L"Tout", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 20, 378,
-                80, 28, hwnd, reinterpret_cast<HMENU>(IDC_SELECT_ALL),
-                g_app.instance, nullptr);
-            g_app.select_lmu_button = CreateWindowExW(
-                0, L"BUTTON", L"LMU", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 108, 378,
-                80, 28, hwnd, reinterpret_cast<HMENU>(IDC_SELECT_LMU),
-                g_app.instance, nullptr);
-            g_app.select_none_button = CreateWindowExW(
-                0, L"BUTTON", L"Aucun", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 196,
-                378, 80, 28, hwnd, reinterpret_cast<HMENU>(IDC_SELECT_NONE),
-                g_app.instance, nullptr);
-            g_app.refresh_button = CreateWindowExW(
-                0, L"BUTTON", L"Rafraichir", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                284, 378, 100, 28, hwnd, reinterpret_cast<HMENU>(IDC_REFRESH),
-                g_app.instance, nullptr);
-            set_font(g_app.select_all_button, g_app.font);
-            set_font(g_app.select_lmu_button, g_app.font);
-            set_font(g_app.select_none_button, g_app.font);
-            set_font(g_app.refresh_button, g_app.font);
 
             g_app.memory_patch_checkbox = CreateWindowExW(
                 0, L"BUTTON",
                 L"Patch memoire SimPro (experimental)",
-                WS_CHILD | BS_AUTOCHECKBOX, 20, 500, 600, 26, hwnd,
+                WS_CHILD | BS_AUTOCHECKBOX, 20, 170, 600, 26, hwnd,
                 reinterpret_cast<HMENU>(IDC_MEMORY_PATCH), g_app.instance,
                 nullptr);
             set_font(g_app.memory_patch_checkbox, g_app.font);
@@ -1069,59 +683,45 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             g_app.autostart = CreateWindowExW(
                 0, L"BUTTON",
                 L"Lancer SimagicFix au demarrage de Windows",
-                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 532, 600, 26, hwnd,
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 202, 600, 26, hwnd,
                 reinterpret_cast<HMENU>(IDC_AUTOSTART), g_app.instance, nullptr);
             set_font(g_app.autostart, g_app.font);
 
             g_app.progress = CreateWindowExW(
-                0, PROGRESS_CLASSW, L"", WS_CHILD | PBS_MARQUEE, 20, 564, 600, 16,
+                0, PROGRESS_CLASSW, L"", WS_CHILD | PBS_MARQUEE, 20, 236, 600, 16,
                 hwnd, reinterpret_cast<HMENU>(IDC_PROGRESS), g_app.instance, nullptr);
 
             g_app.install = CreateWindowExW(
-                0, L"BUTTON", L"Installer le correctif",
-                WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 400, 416, 130, 34, hwnd,
+                0, L"BUTTON", L"Installer SimagicFix",
+                WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 380, 266, 140, 34, hwnd,
                 reinterpret_cast<HMENU>(IDC_INSTALL), g_app.instance, nullptr);
             set_font(g_app.install, g_app.font);
             g_app.cancel = CreateWindowExW(
-                0, L"BUTTON", L"Annuler", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 540,
-                416, 80, 34, hwnd, reinterpret_cast<HMENU>(IDC_CANCEL),
+                0, L"BUTTON", L"Annuler", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 530,
+                266, 90, 34, hwnd, reinterpret_cast<HMENU>(IDC_CANCEL),
                 g_app.instance, nullptr);
             set_font(g_app.cancel, g_app.font);
 
             g_app.test_button = CreateWindowExW(
-                0, L"BUTTON", L"Tester", WS_CHILD | BS_PUSHBUTTON, 420,
-                416, 100, 34, hwnd, reinterpret_cast<HMENU>(IDC_TEST),
+                0, L"BUTTON", L"Tester", WS_CHILD | BS_PUSHBUTTON, 20,
+                266, 110, 34, hwnd, reinterpret_cast<HMENU>(IDC_TEST),
                 g_app.instance, nullptr);
-            g_app.repair_button = CreateWindowExW(
-                0, L"BUTTON", L"Appliquer la selection",
-                WS_CHILD | BS_DEFPUSHBUTTON, 20, 416, 190, 34, hwnd,
-                reinterpret_cast<HMENU>(IDC_REPAIR), g_app.instance, nullptr);
-            g_app.restore_button = CreateWindowExW(
-                0, L"BUTTON", L"Restaurer la selection",
-                WS_CHILD | BS_PUSHBUTTON, 220, 416, 190, 34, hwnd,
-                reinterpret_cast<HMENU>(IDC_RESTORE), g_app.instance, nullptr);
             g_app.logs_button = CreateWindowExW(
-                0, L"BUTTON", L"Ouvrir les logs", WS_CHILD | BS_PUSHBUTTON, 20, 458,
+                0, L"BUTTON", L"Ouvrir les logs", WS_CHILD | BS_PUSHBUTTON, 140, 266,
                 150, 34, hwnd, reinterpret_cast<HMENU>(IDC_LOGS), g_app.instance,
                 nullptr);
-            g_app.quit_button = CreateWindowExW(
-                0, L"BUTTON", L"Quitter", WS_CHILD | BS_PUSHBUTTON, 530, 416, 90, 34,
-                hwnd, reinterpret_cast<HMENU>(IDC_QUIT), g_app.instance, nullptr);
             g_app.uninstall_button = CreateWindowExW(
-                0, L"BUTTON", L"Desinstaller", WS_CHILD | BS_PUSHBUTTON, 180, 458,
-                150, 34, hwnd, reinterpret_cast<HMENU>(IDC_UNINSTALL),
+                0, L"BUTTON", L"Desinstaller", WS_CHILD | BS_PUSHBUTTON, 300, 266,
+                140, 34, hwnd, reinterpret_cast<HMENU>(IDC_UNINSTALL),
                 g_app.instance, nullptr);
+            g_app.quit_button = CreateWindowExW(
+                0, L"BUTTON", L"Quitter", WS_CHILD | BS_PUSHBUTTON, 450, 266, 110, 34,
+                hwnd, reinterpret_cast<HMENU>(IDC_QUIT), g_app.instance, nullptr);
             set_font(g_app.test_button, g_app.font);
-            set_font(g_app.repair_button, g_app.font);
-            set_font(g_app.restore_button, g_app.font);
             set_font(g_app.logs_button, g_app.font);
-            set_font(g_app.quit_button, g_app.font);
             set_font(g_app.uninstall_button, g_app.font);
+            set_font(g_app.quit_button, g_app.font);
 
-            if (!g_app.installed) {
-                g_app.scan_done = true;
-            }
-            populate_list();
             switch_mode(g_app.installed);
             SendMessageW(g_app.autostart, BM_SETCHECK,
                          is_autostart_enabled() ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -1130,13 +730,8 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             if (g_app.installed) {
                 start_bridge();
                 add_tray(hwnd);
-                if (!g_app.tray_only) {
-                    ensure_scan(false);
-                }
             } else {
                 SendMessageW(g_app.autostart, BM_SETCHECK, BST_CHECKED, 0);
-            }
-            if (!g_app.installed) {
                 ShowWindow(hwnd, SW_SHOW);
             }
             return 0;
@@ -1158,9 +753,6 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             return 0;
         case WM_APP_SHOW:
             show_main();
-            if (g_app.installed && !g_app.scan_done) {
-                ensure_scan(false);
-            }
             return 0;
         case WM_APP_TASK_DONE:
             finish_task();
@@ -1181,24 +773,6 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                     break;
                 case IDC_TEST:
                     show_test();
-                    break;
-                case IDC_SELECT_ALL:
-                    set_all_checks(0);
-                    break;
-                case IDC_SELECT_LMU:
-                    set_all_checks(1);
-                    break;
-                case IDC_SELECT_NONE:
-                    set_all_checks(2);
-                    break;
-                case IDC_REFRESH:
-                    ensure_scan(true);
-                    break;
-                case IDC_REPAIR:
-                    start_repair();
-                    break;
-                case IDC_RESTORE:
-                    start_restore();
                     break;
                 case IDC_LOGS:
                     open_logs();
@@ -1241,9 +815,6 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                 return 0;
             }
             if (g_app.installed && !g_app.quitting) {
-                if (g_app.list != nullptr && ListView_GetItemCount(g_app.list) > 0) {
-                    read_selection();
-                }
                 ShowWindow(hwnd, SW_HIDE);
                 return 0;
             }
@@ -1285,7 +856,7 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     INITCOMMONCONTROLSEX controls{};
     controls.dwSize = sizeof(controls);
-    controls.dwICC = ICC_LISTVIEW_CLASSES | ICC_PROGRESS_CLASS | ICC_STANDARD_CLASSES;
+    controls.dwICC = ICC_PROGRESS_CLASS | ICC_STANDARD_CLASSES;
     InitCommonControlsEx(&controls);
 
     g_app.instance = instance;
@@ -1293,8 +864,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     const wchar_t* command_line = GetCommandLineW();
     g_app.tray_only = wcsstr(command_line, L"--tray") != nullptr;
 
-    // Single instance first: a second launch must not scan 30 dashboards before
-    // noticing that the app is already running.
+    // Single instance first: a second launch must not disturb the running app.
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\SimagicFixSingleton");
     if (mutex != nullptr && GetLastError() == ERROR_ALREADY_EXISTS) {
         for (int attempt = 0; attempt < 20; ++attempt) {
@@ -1311,16 +881,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     g_app.state = load_state();
     g_app.installed = g_app.state.installed;
-    // The tray app does not need the dashboard list: scanning every .dash at
-    // startup would delay the bridge by several seconds. Only the installer
-    // page needs it.
-    if (!g_app.installed) {
-        try {
-            g_app.scan = scan_dashboards();
-        } catch (...) {
-            g_app.scan.clear();
-        }
-    }
 
     HICON app_icon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_APP_ICON));
     if (app_icon == nullptr) {
@@ -1355,7 +915,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     HWND main_window = CreateWindowExW(
         0, kMainClass, L"SimagicFix",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, CW_USEDEFAULT,
-        CW_USEDEFAULT, 660, 650, nullptr, nullptr, instance, nullptr);
+        CW_USEDEFAULT, 640, 400, nullptr, nullptr, instance, nullptr);
     if (main_window == nullptr) {
         return 1;
     }

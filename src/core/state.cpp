@@ -22,27 +22,6 @@ AppState load_state() {
         state.bridge_port = json.value("bridge_port", 56799);
         state.version = json.value("version", "");
         state.install_date = json.value("install_date", "");
-        if (json.contains("selection") && json["selection"].is_array()) {
-            for (const auto& item : json["selection"]) {
-                state.selection.push_back(item.get<std::string>());
-            }
-        }
-        if (json.contains("patched") && json["patched"].is_array()) {
-            for (const auto& item : json["patched"]) {
-                PatchedDashboard dash;
-                dash.file = item.value("file", "");
-                dash.name = item.value("name", "");
-                dash.backup = item.value("backup", "");
-                dash.original_crc = item.value("original_crc", 0u);
-                dash.patched_crc = item.value("patched_crc", 0u);
-                if (item.contains("fixes") && item["fixes"].is_array()) {
-                    for (const auto& fix : item["fixes"]) {
-                        dash.fixes.push_back(fix.get<std::string>());
-                    }
-                }
-                state.patched.push_back(std::move(dash));
-            }
-        }
     } catch (...) {
         return AppState{};
     }
@@ -59,18 +38,6 @@ bool save_state(const AppState& state) {
     json["bridge_port"] = state.bridge_port;
     json["version"] = state.version;
     json["install_date"] = state.install_date;
-    json["selection"] = state.selection;
-    json["patched"] = nlohmann::json::array();
-    for (const auto& dash : state.patched) {
-        nlohmann::json item;
-        item["file"] = dash.file;
-        item["name"] = dash.name;
-        item["backup"] = dash.backup;
-        item["original_crc"] = dash.original_crc;
-        item["patched_crc"] = dash.patched_crc;
-        item["fixes"] = dash.fixes;
-        json["patched"].push_back(std::move(item));
-    }
     const fs::path path = state_path();
     const fs::path temp = path.wstring() + L".tmp";
     std::ofstream output(temp);

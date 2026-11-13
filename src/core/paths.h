@@ -7,11 +7,9 @@ namespace simagicfix {
 fs::path local_app_data();
 fs::path app_data_dir();
 fs::path logs_dir();
-fs::path backups_dir();
 fs::path state_path();
 
 fs::path simagic_config_dir();
-fs::path dashboard_dir();
 fs::path simagic_appconfig_path();
 
 fs::path simpro_exe_path();

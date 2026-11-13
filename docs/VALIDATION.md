@@ -73,17 +73,18 @@ ou dans un navigateur :
 
 Le JSON doit indiquer `"lmu_available": true` et les valeurs courantes.
 
-## 6. Vérifier le dashboard
+## 6. Vérifier le volant
 
 - Ouvrir SimPro Manager.
-- Sélectionner un dashboard patché (LMDh Hybrid, LMDh Caddy, Comet 992, LM 963).
+- Activer **« Patch memoire SimPro (experimental) »** dans SimagicFix.
 - Vérifier que TC / TC Cut / MAP / SoC changent quand on agit dans le MFD.
 
-Si le dashboard affiche 0 :
+Si le volant affiche 0 :
 
 - Vérifier que le bridge tourne (`/status`).
-- Vérifier que le dashboard a bien été patché (`SimagicFixCLI.exe scan`).
-- Vérifier que SimPro n'a pas été mis à jour entre-temps (utiliser **Réparer**).
+- Vérifier que le patch mémoire est actif (statut « Patch memoire : actif »).
+- Lancer `SimagicFixCLI.exe patch-memory 30` pour voir les valeurs et les erreurs.
+- Vérifier que SimPro n'a pas été mis à jour entre-temps (les offsets sont spécifiques à 2.1.8).
 
 ## 7. Points à confirmer
 

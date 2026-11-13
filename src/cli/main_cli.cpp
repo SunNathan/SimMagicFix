@@ -1,6 +1,5 @@
 #include "core/autostart.h"
 #include "core/bridge.h"
-#include "core/dash_patcher.h"
 #include "core/installer.h"
 #include "core/mock_shm.h"
 #include "core/paths.h"
@@ -11,8 +10,6 @@
 #include <atomic>
 #include <csignal>
 #include <iostream>
-
-namespace fs = std::filesystem;
 
 namespace {
 
@@ -31,80 +28,11 @@ void print_help() {
         << "SimagicFixCLI\n"
         << "  selftest                 Print LMU SDK struct sizes/offsets\n"
         << "  probe                    Dump live LMU values\n"
-        << "  scan                     List compatible dashboards\n"
-        << "  patch-dash [--all|FILE]  Patch value bindings (backup included)\n"
-        << "  restore-dash             Restore original dashboards\n"
         << "  mock-shm [SECONDS]       Create a fake LMU_Data mapping\n"
         << "  patch-memory [SECONDS]   Write LMU aids into SimPro game_data\n"
         << "  run [--mock] [--port N] [--simpro-port N]\n"
         << "  install [--no-autostart]\n"
         << "  autostart --enable|--disable|--status\n";
-}
-
-std::vector<fs::path> compatible_dashboards() {
-    std::vector<fs::path> paths;
-    for (const auto& item : simagicfix::scan_dashboards()) {
-        if (item.compatible || item.already_patched) {
-            paths.push_back(item.file);
-        }
-    }
-    return paths;
-}
-
-int command_scan() {
-    const auto results = simagicfix::scan_dashboards();
-    if (results.empty()) {
-        std::cout << "No compatible dashboard found in "
-                  << simagicfix::path_to_utf8(simagicfix::dashboard_dir()) << "\n";
-        return 1;
-    }
-    for (const auto& item : results) {
-        std::cout << item.name << " ["
-                  << simagicfix::path_to_utf8(item.file) << "]\n";
-        std::cout << "  compatible: " << (item.compatible ? "yes" : "no")
-                  << "  already patched: " << (item.already_patched ? "yes" : "no")
-                  << "\n";
-        for (const auto& fix : item.fixes) {
-            std::cout << "    - " << fix << "\n";
-        }
-    }
-    return 0;
-}
-
-int command_patch(const std::vector<std::string>& args) {
-    std::vector<fs::path> targets;
-    if (!args.empty() && args[0] != "--all") {
-        targets.emplace_back(simagicfix::utf8_to_wide(args[0]));
-    } else {
-        targets = compatible_dashboards();
-    }
-    if (targets.empty()) {
-        std::cout << "No dashboard to patch.\n";
-        return 1;
-    }
-    int failures = 0;
-    for (const auto& target : targets) {
-        const auto result = simagicfix::patch_dashboard(target);
-        if (!result.ok) {
-            std::cout << "FAILED " << result.name << ": " << result.error << "\n";
-            ++failures;
-            continue;
-        }
-        std::cout << "OK " << result.name;
-        if (result.applied.empty()) {
-            std::cout << " (already patched or no matching value)";
-        } else {
-            std::cout << " -> ";
-            for (size_t i = 0; i < result.applied.size(); ++i) {
-                if (i != 0) {
-                    std::cout << ", ";
-                }
-                std::cout << result.applied[i];
-            }
-        }
-        std::cout << "\n";
-    }
-    return failures == 0 ? 0 : 1;
 }
 
 int command_install(const std::vector<std::string>& args) {
@@ -115,17 +43,12 @@ int command_install(const std::vector<std::string>& args) {
             options.auto_start = false;
         }
     }
-    options.dashboards = compatible_dashboards();
     const auto report = simagicfix::install(options);
     if (!report.ok) {
         std::cout << "Install failed: " << report.error << "\n";
         return 1;
     }
-    std::cout << "Installed. Patched dashboards:\n";
-    for (const auto& item : report.patched) {
-        std::cout << "  - " << item.name << " (" << item.applied.size()
-                  << " values)\n";
-    }
+    std::cout << "Installed.\n";
     std::cout << "Auto-start: " << (options.auto_start ? "enabled" : "disabled")
               << "\n";
     return 0;
@@ -198,15 +121,6 @@ int main(int argc, char** argv) {
     }
     if (command == "probe") {
         return simagicfix::run_probe();
-    }
-    if (command == "scan") {
-        return command_scan();
-    }
-    if (command == "patch-dash") {
-        return command_patch(args);
-    }
-    if (command == "restore-dash") {
-        return simagicfix::restore_all() ? 0 : 1;
     }
     if (command == "mock-shm") {
         int seconds = 30;
