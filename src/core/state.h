@@ -16,7 +16,10 @@ struct PatchedDashboard {
 struct AppState {
     bool installed = false;
     bool auto_start = false;
+    bool compat_mode = false;
     int bridge_port = 56799;
+    int simpro_rpc_port = 56789;  // SimPro's original RPC port
+    int compat_rpc_port = 56788;  // RPC port used by SimPro in compatibility mode
     std::string version;
     std::string install_date;
     std::vector<PatchedDashboard> patched;

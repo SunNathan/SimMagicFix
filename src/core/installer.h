@@ -6,6 +6,7 @@ namespace simagicfix {
 
 struct InstallOptions {
     bool auto_start = true;
+    bool compat_mode = false;
     std::vector<fs::path> dashboards;
 };
 

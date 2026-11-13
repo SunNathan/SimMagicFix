@@ -220,6 +220,23 @@ fs::path find_simpro_in_registry() {
     return {};
 }
 
+int read_simpro_config_int(const char* key, int fallback) {
+    const fs::path config = simagic_appconfig_path();
+    if (!path_is_file(config)) {
+        return fallback;
+    }
+    try {
+        std::ifstream input(config);
+        nlohmann::json json;
+        input >> json;
+        if (json.contains(key) && json[key].is_number_integer()) {
+            return json[key].get<int>();
+        }
+    } catch (...) {
+    }
+    return fallback;
+}
+
 }  // namespace
 
 fs::path local_app_data() {
@@ -240,6 +257,9 @@ fs::path app_data_dir() { return local_app_data() / L"SimagicFix"; }
 fs::path logs_dir() { return app_data_dir() / L"logs"; }
 fs::path backups_dir() { return app_data_dir() / L"backups"; }
 fs::path state_path() { return app_data_dir() / L"state.json"; }
+fs::path simpro_appconfig_backup_path() {
+    return backups_dir() / L"appconfig.json.bak";
+}
 
 fs::path simagic_config_dir() { return local_app_data() / L"Simagic" / L"config"; }
 fs::path dashboard_dir() {
@@ -296,21 +316,70 @@ fs::path lmu_sdk_path() {
     return install / L"Support" / L"SharedMemoryInterface";
 }
 
-int simpro_rpc_port() {
+int simpro_rpc_port() { return read_simpro_config_int("rpcPort", 56789); }
+int simpro_http_port() { return read_simpro_config_int("httpPort", 56791); }
+
+bool write_simpro_rpc_port(int port, std::string& error) {
     const fs::path config = simagic_appconfig_path();
-    if (!path_is_file(config)) {
-        return 56789;
+    std::error_code ec;
+    if (!fs::is_regular_file(config, ec)) {
+        error = "appconfig.json not found";
+        return false;
     }
     try {
         std::ifstream input(config);
         nlohmann::json json;
         input >> json;
-        if (json.contains("rpcPort") && json["rpcPort"].is_number_integer()) {
-            return json["rpcPort"].get<int>();
+        input.close();
+        json["rpcPort"] = port;
+
+        const fs::path temp = config.wstring() + L".tmp";
+        std::ofstream output(temp, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            error = "Cannot write appconfig.json";
+            return false;
         }
+        const std::string text = json.dump(4);
+        output.write(text.data(), static_cast<std::streamsize>(text.size()));
+        output.close();
+        if (!output) {
+            error = "Cannot write appconfig.json";
+            return false;
+        }
+        if (!MoveFileExW(temp.wstring().c_str(), config.wstring().c_str(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            error = "Cannot replace appconfig.json";
+            return false;
+        }
+        return true;
+    } catch (const std::exception& e) {
+        error = e.what();
+        return false;
     } catch (...) {
+        error = "Cannot update appconfig.json";
+        return false;
     }
-    return 56789;
+}
+
+bool backup_simpro_appconfig(std::string& error) {
+    const fs::path config = simagic_appconfig_path();
+    const fs::path backup = simpro_appconfig_backup_path();
+    std::error_code ec;
+    if (!fs::is_regular_file(config, ec)) {
+        error = "appconfig.json not found";
+        return false;
+    }
+    fs::create_directories(backup.parent_path(), ec);
+    if (ec) {
+        error = "Cannot create backups directory: " + ec.message();
+        return false;
+    }
+    fs::copy_file(config, backup, fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        error = "Cannot back up appconfig.json: " + ec.message();
+        return false;
+    }
+    return true;
 }
 
 bool process_running(const std::wstring& exe_name) {

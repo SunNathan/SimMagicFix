@@ -5,11 +5,13 @@
 #include "core/mock_shm.h"
 #include "core/paths.h"
 #include "core/probe.h"
+#include "core/simpro_client.h"
 #include "core/state.h"
 
 #include <atomic>
 #include <csignal>
 #include <iostream>
+#include <set>
 
 namespace fs = std::filesystem;
 
@@ -33,9 +35,11 @@ void print_help() {
         << "  scan                     List compatible dashboards\n"
         << "  patch-dash [--all|FILE]  Patch value bindings (backup included)\n"
         << "  restore-dash             Restore original dashboards\n"
+        << "  restore-unselected       Restore dashboards outside the saved selection\n"
         << "  mock-shm [SECONDS]       Create a fake LMU_Data mapping\n"
-        << "  run [--mock] [--port N] [--simpro-port N]\n"
-        << "  install [--no-autostart]\n"
+        << "  run [--mock] [--port N] [--fallback-port N] [--simpro-port N]\n"
+        << "  install [--no-autostart] [--compat|--no-compat]\n"
+        << "  compat on|off|status     Move SimPro RPC to 56788 for the bridge\n"
         << "  autostart --enable|--disable|--status\n";
 }
 
@@ -111,9 +115,20 @@ int command_install(const std::vector<std::string>& args) {
     for (const auto& arg : args) {
         if (arg == "--no-autostart") {
             options.auto_start = false;
+        } else if (arg == "--compat") {
+            options.compat_mode = true;
+        } else if (arg == "--no-compat") {
+            options.compat_mode = false;
         }
     }
-    options.dashboards = compatible_dashboards();
+    const simagicfix::AppState state = simagicfix::load_state();
+    if (!state.selection.empty()) {
+        for (const auto& file : state.selection) {
+            options.dashboards.push_back(simagicfix::utf8_to_path(file));
+        }
+    } else {
+        options.dashboards = compatible_dashboards();
+    }
     const auto report = simagicfix::install(options);
     if (!report.ok) {
         std::cout << "Install failed: " << report.error << "\n";
@@ -126,7 +141,82 @@ int command_install(const std::vector<std::string>& args) {
     }
     std::cout << "Auto-start: " << (options.auto_start ? "enabled" : "disabled")
               << "\n";
+    std::cout << "Compatibility mode: "
+              << (options.compat_mode ? "enabled (SimPro RPC 56788)" : "disabled")
+              << "\n";
     return 0;
+}
+
+int command_compat(const std::vector<std::string>& args) {
+    simagicfix::AppState state = simagicfix::load_state();
+    const int original_port =
+        state.simpro_rpc_port > 0 ? state.simpro_rpc_port : 56789;
+    const int compat_port =
+        state.compat_rpc_port > 0 ? state.compat_rpc_port : 56788;
+
+    if (args.empty() || args[0] == "status") {
+        const int current = simagicfix::simpro_rpc_port();
+        std::cout << "SimPro RPC port : " << current << "\n";
+        std::cout << "SimPro HTTP port: " << simagicfix::simpro_http_port()
+                  << "\n";
+        std::cout << "Expected port   : "
+                  << (state.compat_mode ? compat_port : original_port) << "\n";
+        const auto response = simagicfix::post_json_to_simpro(
+            current,
+            R"({"id":1,"jsonrpc":"2.0","method":"query","params":{"items":["devices"]}})",
+            800);
+        std::cout << "Reachable       : "
+                  << (response.has_value() ? "yes" : "no") << "\n";
+        return 0;
+    }
+
+    const bool enable = args[0] == "on";
+    if (!enable && args[0] != "off") {
+        print_help();
+        return 1;
+    }
+
+    std::string error;
+    if (enable && !state.compat_mode &&
+        simagicfix::simpro_rpc_port() != compat_port) {
+        if (!simagicfix::backup_simpro_appconfig(error)) {
+            std::cout << "Cannot back up SimPro config: " << error << "\n";
+            return 1;
+        }
+    }
+    const int target = enable ? compat_port : original_port;
+    if (!simagicfix::write_simpro_rpc_port(target, error)) {
+        std::cout << "Cannot update SimPro config: " << error << "\n";
+        return 1;
+    }
+    state.compat_mode = enable;
+    state.simpro_rpc_port = original_port;
+    state.compat_rpc_port = compat_port;
+    state.bridge_port = enable ? 56789 : 56799;
+    simagicfix::save_state(state);
+    std::cout << "SimPro rpcPort set to " << target << ".\n";
+    std::cout << "Restart SimPro Manager, then start SimagicFix.\n";
+    return 0;
+}
+
+int command_restore_unselected() {
+    const simagicfix::AppState state = simagicfix::load_state();
+    const std::set<std::string> selected(state.selection.begin(),
+                                         state.selection.end());
+    std::vector<fs::path> targets;
+    for (const auto& dashboard : state.patched) {
+        if (selected.find(dashboard.file) == selected.end()) {
+            targets.push_back(simagicfix::utf8_to_path(dashboard.file));
+        }
+    }
+    if (targets.empty()) {
+        std::cout << "No unselected patched dashboard.\n";
+        return 0;
+    }
+    const bool ok = simagicfix::restore_selected(targets);
+    std::cout << (ok ? "Restored " : "Restore failed for ")
+              << targets.size() << " dashboard(s).\n";
+    return ok ? 0 : 1;
 }
 
 }  // namespace
@@ -160,6 +250,9 @@ int main(int argc, char** argv) {
     if (command == "restore-dash") {
         return simagicfix::restore_all() ? 0 : 1;
     }
+    if (command == "restore-unselected") {
+        return command_restore_unselected();
+    }
     if (command == "mock-shm") {
         int seconds = 30;
         if (!args.empty()) {
@@ -174,6 +267,9 @@ int main(int argc, char** argv) {
     }
     if (command == "install") {
         return command_install(args);
+    }
+    if (command == "compat") {
+        return command_compat(args);
     }
     if (command == "autostart") {
         if (args.empty() || args[0] == "--status") {
@@ -193,7 +289,9 @@ int main(int argc, char** argv) {
     if (command == "run") {
         simagicfix::BridgeService::Options options;
         options.port = 56799;
+        options.fallback_port = 0;
         options.simpro_port = simagicfix::simpro_rpc_port();
+        options.simpro_http_port = simagicfix::simpro_http_port();
         for (size_t i = 0; i < args.size(); ++i) {
             if (args[i] == "--mock") {
                 options.mock = true;
@@ -202,6 +300,13 @@ int main(int argc, char** argv) {
                     options.port = std::stoi(args[++i]);
                 } catch (...) {
                     std::cout << "Invalid --port value\n";
+                    return 1;
+                }
+            } else if (args[i] == "--fallback-port" && i + 1 < args.size()) {
+                try {
+                    options.fallback_port = std::stoi(args[++i]);
+                } catch (...) {
+                    std::cout << "Invalid --fallback-port value\n";
                     return 1;
                 }
             } else if (args[i] == "--simpro-port" && i + 1 < args.size()) {
@@ -218,8 +323,15 @@ int main(int argc, char** argv) {
             std::cout << "Cannot start bridge: " << bridge.last_error() << "\n";
             return 1;
         }
-        std::cout << "Bridge listening on 127.0.0.1:" << bridge.port()
-                  << " (SimPro " << options.simpro_port << ")"
+        std::cout << "Bridge listening on ";
+        const auto ports = bridge.ports();
+        for (size_t i = 0; i < ports.size(); ++i) {
+            if (i != 0) {
+                std::cout << " + ";
+            }
+            std::cout << "127.0.0.1:" << ports[i];
+        }
+        std::cout << " (SimPro RPC " << options.simpro_port << ")"
                   << (options.mock ? " [mock]" : "") << "\n";
         std::cout << "Press Ctrl+C to stop.\n";
         while (!g_stop.load() && bridge.running()) {

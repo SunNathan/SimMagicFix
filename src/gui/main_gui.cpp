@@ -52,6 +52,7 @@ enum ControlId {
     IDC_SELECT_LMU,
     IDC_SELECT_NONE,
     IDC_REFRESH,
+    IDC_COMPAT,
     IDC_TEST_SOURCE,
     IDC_TEST_TC,
     IDC_TEST_TCCUT,
@@ -70,6 +71,7 @@ enum MenuId {
     IDM_REPAIR,
     IDM_RESTORE,
     IDM_AUTOSTART,
+    IDM_COMPAT,
     IDM_LOGS,
     IDM_UNINSTALL,
     IDM_QUIT,
@@ -85,6 +87,7 @@ struct App {
     HWND status_dash = nullptr;
     HWND status_bridge = nullptr;
     HWND autostart = nullptr;
+    HWND compat_checkbox = nullptr;
     HWND progress = nullptr;
     HWND install = nullptr;
     HWND cancel = nullptr;
@@ -186,14 +189,42 @@ void start_bridge() {
         return;
     }
     BridgeService::Options options;
-    options.port = g_app.state.bridge_port > 0 ? g_app.state.bridge_port : 56799;
-    options.simpro_port = simpro_rpc_port();
     options.mock = false;
+    options.simpro_http_port = simpro_http_port();
+    if (g_app.state.compat_mode) {
+        options.port = 56789;
+        options.fallback_port = 56799;
+        options.simpro_port =
+            g_app.state.compat_rpc_port > 0 ? g_app.state.compat_rpc_port : 56788;
+    } else {
+        options.port = g_app.state.bridge_port > 0 ? g_app.state.bridge_port : 56799;
+        options.fallback_port = 0;
+        options.simpro_port = simpro_rpc_port();
+    }
+
     g_app.bridge = std::make_unique<BridgeService>(options);
     if (!g_app.bridge->start()) {
         log_line("Bridge start failed: " + g_app.bridge->last_error());
+        if (g_app.state.compat_mode) {
+            BridgeService::Options fallback = options;
+            fallback.port = 56799;
+            fallback.fallback_port = 0;
+            g_app.bridge = std::make_unique<BridgeService>(fallback);
+            if (g_app.bridge->start()) {
+                log_line("Bridge started on fallback port 56799 (56789 busy)");
+            } else {
+                log_line("Bridge fallback failed: " + g_app.bridge->last_error());
+            }
+        }
     } else {
-        log_line("Bridge started on port " + std::to_string(options.port));
+        std::string ports;
+        for (int port : g_app.bridge->ports()) {
+            if (!ports.empty()) {
+                ports += ", ";
+            }
+            ports += std::to_string(port);
+        }
+        log_line("Bridge started on port(s) " + ports);
     }
 }
 
@@ -263,9 +294,12 @@ void refresh_status() {
     }
     const fs::path simpro = simpro_exe_path();
     const fs::path lmu = lmu_install_path();
+    const int rpc_port = simpro_rpc_port();
     set_text(g_app.status_simpro,
-             simpro.empty() ? "SimPro Manager : non detecte"
-                            : "SimPro Manager : detecte");
+             simpro.empty()
+                 ? "SimPro Manager : non detecte"
+                 : "SimPro Manager : detecte (RPC " +
+                       std::to_string(rpc_port) + ")");
     set_text(g_app.status_lmu,
              lmu.empty() ? "Le Mans Ultimate : non detecte"
                          : "Le Mans Ultimate : detecte");
@@ -294,7 +328,15 @@ void refresh_status() {
 
     std::string bridge_text = "Bridge : ";
     if (g_app.bridge && g_app.bridge->running()) {
-        bridge_text += "actif (port " + std::to_string(g_app.bridge->port()) + ")";
+        bridge_text += "actif (";
+        const std::vector<int> ports = g_app.bridge->ports();
+        for (size_t i = 0; i < ports.size(); ++i) {
+            if (i != 0) {
+                bridge_text += " + ";
+            }
+            bridge_text += std::to_string(ports[i]);
+        }
+        bridge_text += ")";
         if (g_app.bridge->lmu_available()) {
             bridge_text += " - LMU detecte";
         }
@@ -302,6 +344,11 @@ void refresh_status() {
         bridge_text += "inactif";
     }
     set_text(g_app.status_bridge, bridge_text);
+
+    if (g_app.compat_checkbox != nullptr && g_app.installed) {
+        SendMessageW(g_app.compat_checkbox, BM_SETCHECK,
+                     g_app.state.compat_mode ? BST_CHECKED : BST_UNCHECKED, 0);
+    }
 
     if (g_app.installed) {
         const bool autostart = is_autostart_enabled();
@@ -417,6 +464,7 @@ void switch_mode(bool installed) {
     ShowWindow(g_app.logs_button, show_manage);
     ShowWindow(g_app.quit_button, show_manage);
     ShowWindow(g_app.uninstall_button, show_manage);
+    ShowWindow(g_app.compat_checkbox, SW_SHOW);
     SetWindowTextW(g_app.main, installed ? L"SimagicFix" : L"SimagicFix - installation");
     refresh_status();
 }
@@ -678,20 +726,19 @@ void ensure_scan(bool force) {
     });
 }
 
-bool prepare_simpro_for_patch() {
+bool prepare_simpro_restart(const wchar_t* message) {
     g_app.simpro_was_running = process_running(L"simpro.exe");
     if (!g_app.simpro_was_running) {
         return true;
     }
-    const int answer = MessageBoxW(
-        g_app.main,
-        L"SimPro Manager est ouvert.\n"
-        L"Le fermer pour appliquer le correctif, puis le relancer ?",
-        L"SimagicFix", MB_YESNO | MB_ICONQUESTION);
+    const int answer = MessageBoxW(g_app.main, message, L"SimagicFix",
+                                   MB_YESNO | MB_ICONQUESTION);
     if (answer != IDYES) {
+        g_app.simpro_was_running = false;
         return false;
     }
     if (!close_process(L"simpro.exe")) {
+        g_app.simpro_was_running = false;
         MessageBoxW(g_app.main,
                     L"Impossible de fermer SimPro Manager. Ferme-le "
                     L"manuellement puis reessaie.",
@@ -701,6 +748,159 @@ bool prepare_simpro_for_patch() {
     return true;
 }
 
+bool prepare_simpro_for_patch() {
+    return prepare_simpro_restart(
+        L"SimPro Manager est ouvert.\n"
+        L"Le fermer pour appliquer le correctif, puis le relancer ?");
+}
+
+void restore_simpro_after_failed_toggle() {
+    if (g_app.simpro_was_running) {
+        start_process(simpro_exe_path());
+        g_app.simpro_was_running = false;
+    }
+}
+
+void toggle_compat(bool enable) {
+    if (g_app.task_running) {
+        return;
+    }
+    if (enable == g_app.state.compat_mode) {
+        return;
+    }
+    if (!prepare_simpro_restart(
+            enable
+                ? L"SimPro Manager est ouvert.\n"
+                  L"Le fermer pour activer le mode compatibilité, puis le relancer ?"
+                : L"SimPro Manager est ouvert.\n"
+                  L"Le fermer pour désactiver le mode compatibilité, puis le relancer ?")) {
+        SendMessageW(g_app.compat_checkbox, BM_SETCHECK,
+                     g_app.state.compat_mode ? BST_CHECKED : BST_UNCHECKED, 0);
+        return;
+    }
+
+    const int original_port =
+        g_app.state.simpro_rpc_port > 0 ? g_app.state.simpro_rpc_port : 56789;
+    const int compat_port =
+        g_app.state.compat_rpc_port > 0 ? g_app.state.compat_rpc_port : 56788;
+    std::string error;
+    if (enable) {
+        if (!g_app.state.compat_mode && simpro_rpc_port() != compat_port) {
+            if (!backup_simpro_appconfig(error)) {
+                MessageBoxW(
+                    g_app.main,
+                    w("Impossible de sauvegarder appconfig.json : " + error).c_str(),
+                    L"SimagicFix", MB_ICONERROR);
+                restore_simpro_after_failed_toggle();
+                SendMessageW(g_app.compat_checkbox, BM_SETCHECK, BST_UNCHECKED, 0);
+                return;
+            }
+        }
+        if (!write_simpro_rpc_port(compat_port, error)) {
+            MessageBoxW(
+                g_app.main,
+                w("Impossible de modifier le port RPC de SimPro : " + error).c_str(),
+                L"SimagicFix", MB_ICONERROR);
+            restore_simpro_after_failed_toggle();
+            SendMessageW(g_app.compat_checkbox, BM_SETCHECK, BST_UNCHECKED, 0);
+            return;
+        }
+        g_app.state.compat_mode = true;
+        g_app.state.simpro_rpc_port = original_port;
+        g_app.state.compat_rpc_port = compat_port;
+        g_app.state.bridge_port = 56789;
+    } else {
+        if (!write_simpro_rpc_port(original_port, error)) {
+            MessageBoxW(
+                g_app.main,
+                w("Impossible de restaurer le port RPC de SimPro : " + error)
+                    .c_str(),
+                L"SimagicFix", MB_ICONERROR);
+            restore_simpro_after_failed_toggle();
+            SendMessageW(g_app.compat_checkbox, BM_SETCHECK, BST_CHECKED, 0);
+            return;
+        }
+        g_app.state.compat_mode = false;
+        g_app.state.bridge_port = 56799;
+    }
+    save_state(g_app.state);
+
+    stop_bridge();
+    start_bridge();
+    if (g_app.simpro_was_running) {
+        start_process(simpro_exe_path());
+        g_app.simpro_was_running = false;
+    }
+    refresh_status();
+
+    if (enable && (!g_app.bridge || !g_app.bridge->running() ||
+                   g_app.bridge->port() != 56789)) {
+        MessageBoxW(g_app.main,
+                    L"Le mode compatibilité est activé, mais le port 56789 "
+                    L"n'a pas pu être ouvert. Ferme l'application qui "
+                    L"l'utilise puis réactive le mode.",
+                    L"SimagicFix", MB_ICONWARNING);
+    } else {
+        MessageBoxW(g_app.main,
+                    enable ? L"Mode compatibilité activé.\n"
+                             L"SimPro utilise le RPC 56788 ; le bridge écoute "
+                             L"sur 56789 et 56799."
+                           : L"Mode compatibilité désactivé.\n"
+                             L"SimPro utilise de nouveau le RPC 56789.",
+                    L"SimagicFix", MB_ICONINFORMATION);
+    }
+}
+
+void quit_app() {
+    if (g_app.task_running) {
+        MessageBoxW(g_app.main,
+                    L"Une operation est en cours. Patiente quelques instants.",
+                    L"SimagicFix", MB_ICONINFORMATION);
+        return;
+    }
+    if (g_app.state.compat_mode) {
+        const int answer = MessageBoxW(
+            g_app.main,
+            L"Quitter SimagicFix ?\n\n"
+            L"Le mode compatibilité sera désactivé et SimPro sera redémarré "
+            L"sur son port RPC normal.",
+            L"SimagicFix", MB_YESNO | MB_ICONQUESTION);
+        if (answer != IDYES) {
+            return;
+        }
+        const bool simpro_running = process_running(L"simpro.exe");
+        if (simpro_running && !close_process(L"simpro.exe")) {
+            MessageBoxW(g_app.main,
+                        L"Impossible de fermer SimPro. Ferme-le manuellement "
+                        L"puis reessaie.",
+                        L"SimagicFix", MB_ICONERROR);
+            return;
+        }
+        std::string error;
+        if (!write_simpro_rpc_port(
+                g_app.state.simpro_rpc_port > 0 ? g_app.state.simpro_rpc_port
+                                                : 56789,
+                error)) {
+            MessageBoxW(
+                g_app.main,
+                w("Impossible de restaurer appconfig.json : " + error).c_str(),
+                L"SimagicFix", MB_ICONERROR);
+            if (simpro_running) {
+                start_process(simpro_exe_path());
+            }
+            return;
+        }
+        g_app.state.compat_mode = false;
+        g_app.state.bridge_port = 56799;
+        save_state(g_app.state);
+        if (simpro_running) {
+            start_process(simpro_exe_path());
+        }
+    }
+    g_app.quitting = true;
+    DestroyWindow(g_app.main);
+}
+
 void start_install() {
     if (g_app.task_running) {
         return;
@@ -708,6 +908,8 @@ void start_install() {
     InstallOptions options;
     options.auto_start =
         SendMessageW(g_app.autostart, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    options.compat_mode =
+        SendMessageW(g_app.compat_checkbox, BM_GETCHECK, 0, 0) == BST_CHECKED;
     options.dashboards = read_selection();
     if (options.dashboards.empty()) {
         MessageBoxW(g_app.main,
@@ -753,6 +955,7 @@ void start_repair() {
     InstallOptions options;
     options.auto_start =
         SendMessageW(g_app.autostart, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    options.compat_mode = g_app.state.compat_mode;
     options.dashboards = std::move(selected);
     run_task(TaskKind::Repair, [options]() {
         const InstallReport report = install(options);
@@ -880,6 +1083,9 @@ void handle_menu(int id) {
         case IDM_AUTOSTART:
             toggle_autostart();
             break;
+        case IDM_COMPAT:
+            toggle_compat(!g_app.state.compat_mode);
+            break;
         case IDM_LOGS:
             open_logs();
             break;
@@ -887,8 +1093,7 @@ void handle_menu(int id) {
             do_uninstall();
             break;
         case IDM_QUIT:
-            g_app.quitting = true;
-            DestroyWindow(g_app.main);
+            quit_app();
             break;
         default:
             break;
@@ -905,6 +1110,8 @@ void show_tray_menu(HWND hwnd) {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (is_autostart_enabled() ? MF_CHECKED : 0),
                 IDM_AUTOSTART, L"Demarrage automatique");
+    AppendMenuW(menu, MF_STRING | (g_app.state.compat_mode ? MF_CHECKED : 0),
+                IDM_COMPAT, L"Mode compatibilité SimPro");
     AppendMenuW(menu, MF_STRING, IDM_LOGS, L"Ouvrir les logs");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_UNINSTALL, L"Desinstaller");
@@ -1017,15 +1224,22 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             set_font(g_app.select_none_button, g_app.font);
             set_font(g_app.refresh_button, g_app.font);
 
+            g_app.compat_checkbox = CreateWindowExW(
+                0, L"BUTTON", L"Mode compatibilité SimPro (RPC 56788)",
+                WS_CHILD | BS_AUTOCHECKBOX, 20, 500, 600, 26, hwnd,
+                reinterpret_cast<HMENU>(IDC_COMPAT), g_app.instance, nullptr);
+            set_font(g_app.compat_checkbox, g_app.font);
+            SendMessageW(g_app.compat_checkbox, BM_SETCHECK, BST_CHECKED, 0);
+
             g_app.autostart = CreateWindowExW(
                 0, L"BUTTON",
                 L"Lancer SimagicFix au demarrage de Windows",
-                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 502, 600, 26, hwnd,
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 532, 600, 26, hwnd,
                 reinterpret_cast<HMENU>(IDC_AUTOSTART), g_app.instance, nullptr);
             set_font(g_app.autostart, g_app.font);
 
             g_app.progress = CreateWindowExW(
-                0, PROGRESS_CLASSW, L"", WS_CHILD | PBS_MARQUEE, 20, 534, 600, 16,
+                0, PROGRESS_CLASSW, L"", WS_CHILD | PBS_MARQUEE, 20, 564, 600, 16,
                 hwnd, reinterpret_cast<HMENU>(IDC_PROGRESS), g_app.instance, nullptr);
 
             g_app.install = CreateWindowExW(
@@ -1079,6 +1293,15 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             SetTimer(hwnd, 1, 1000, nullptr);
 
             if (g_app.installed) {
+                if (g_app.state.compat_mode &&
+                    simpro_rpc_port() != g_app.state.compat_rpc_port &&
+                    !process_running(L"simpro.exe")) {
+                    std::string error;
+                    if (!write_simpro_rpc_port(g_app.state.compat_rpc_port,
+                                               error)) {
+                        log_line("Cannot re-apply SimPro RPC port: " + error);
+                    }
+                }
                 start_bridge();
                 add_tray(hwnd);
                 if (!g_app.tray_only) {
@@ -1155,8 +1378,7 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                     open_logs();
                     break;
                 case IDC_QUIT:
-                    g_app.quitting = true;
-                    DestroyWindow(hwnd);
+                    quit_app();
                     break;
                 case IDC_UNINSTALL:
                     do_uninstall();
@@ -1164,6 +1386,14 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                 case IDC_AUTOSTART:
                     if (g_app.installed) {
                         toggle_autostart();
+                    }
+                    break;
+                case IDC_COMPAT:
+                    if (g_app.installed) {
+                        const bool enable =
+                            SendMessageW(g_app.compat_checkbox, BM_GETCHECK, 0,
+                                         0) == BST_CHECKED;
+                        toggle_compat(enable);
                     }
                     break;
                 default:
@@ -1292,7 +1522,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     HWND main_window = CreateWindowExW(
         0, kMainClass, L"SimagicFix",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, CW_USEDEFAULT,
-        CW_USEDEFAULT, 660, 600, nullptr, nullptr, instance, nullptr);
+        CW_USEDEFAULT, 660, 650, nullptr, nullptr, instance, nullptr);
     if (main_window == nullptr) {
         return 1;
     }

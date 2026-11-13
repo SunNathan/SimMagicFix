@@ -18,7 +18,10 @@ AppState load_state() {
         input >> json;
         state.installed = json.value("installed", false);
         state.auto_start = json.value("auto_start", false);
+        state.compat_mode = json.value("compat_mode", false);
         state.bridge_port = json.value("bridge_port", 56799);
+        state.simpro_rpc_port = json.value("simpro_rpc_port", 56789);
+        state.compat_rpc_port = json.value("compat_rpc_port", 56788);
         state.version = json.value("version", "");
         state.install_date = json.value("install_date", "");
         if (json.contains("selection") && json["selection"].is_array()) {
@@ -54,7 +57,10 @@ bool save_state(const AppState& state) {
     nlohmann::json json;
     json["installed"] = state.installed;
     json["auto_start"] = state.auto_start;
+    json["compat_mode"] = state.compat_mode;
     json["bridge_port"] = state.bridge_port;
+    json["simpro_rpc_port"] = state.simpro_rpc_port;
+    json["compat_rpc_port"] = state.compat_rpc_port;
     json["version"] = state.version;
     json["install_date"] = state.install_date;
     json["selection"] = state.selection;

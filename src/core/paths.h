@@ -19,6 +19,13 @@ fs::path lmu_install_path();
 fs::path lmu_sdk_path();
 
 int simpro_rpc_port();
+int simpro_http_port();
+
+// Changes only the rpcPort field of SimPro's appconfig.json. The file is
+// written atomically so a crash cannot leave a truncated config behind.
+bool write_simpro_rpc_port(int port, std::string& error);
+bool backup_simpro_appconfig(std::string& error);
+fs::path simpro_appconfig_backup_path();
 
 bool process_running(const std::wstring& exe_name);
 bool close_process(const std::wstring& exe_name, int timeout_ms = 15000);

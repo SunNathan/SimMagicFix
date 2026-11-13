@@ -91,11 +91,44 @@ InstallReport install(const InstallOptions& options) {
     AppState state = load_state();
     state.installed = true;
     state.auto_start = options.auto_start;
-    state.bridge_port = 56799;
-    state.version = "0.1.0";
+    state.version = "0.2.0";
     if (state.install_date.empty()) {
         state.install_date = now_string();
     }
+    if (state.simpro_rpc_port <= 0) {
+        state.simpro_rpc_port = 56789;
+    }
+    if (state.compat_rpc_port <= 0) {
+        state.compat_rpc_port = 56788;
+    }
+
+    if (options.compat_mode) {
+        if (!state.compat_mode && simpro_rpc_port() != state.compat_rpc_port) {
+            std::string config_error;
+            if (!backup_simpro_appconfig(config_error)) {
+                report.error = "Cannot back up SimPro config: " + config_error;
+                return report;
+            }
+        }
+        std::string config_error;
+        if (!write_simpro_rpc_port(state.compat_rpc_port, config_error)) {
+            report.error = "Cannot change SimPro RPC port: " + config_error;
+            return report;
+        }
+        state.compat_mode = true;
+        state.bridge_port = 56789;
+    } else {
+        if (state.compat_mode) {
+            std::string config_error;
+            if (!write_simpro_rpc_port(state.simpro_rpc_port, config_error)) {
+                report.error = "Cannot restore SimPro RPC port: " + config_error;
+                return report;
+            }
+        }
+        state.compat_mode = false;
+        state.bridge_port = 56799;
+    }
+    save_state(state);
 
     for (const auto& dashboard : options.dashboards) {
         if (!fs::is_regular_file(dashboard)) {
@@ -184,13 +217,22 @@ bool restore_selected(const std::vector<fs::path>& files) {
 
 bool uninstall(bool restore_dashboards) {
     bool restored = true;
+    AppState state = load_state();
+    if (state.compat_mode) {
+        std::string config_error;
+        if (!write_simpro_rpc_port(state.simpro_rpc_port, config_error)) {
+            restored = false;
+        }
+    }
     if (restore_dashboards) {
-        restored = restore_all();
+        restored = restore_all() && restored;
     }
     disable_autostart();
     remove_start_menu_shortcut();
-    AppState state = load_state();
+    state = load_state();
     state.installed = false;
+    state.compat_mode = false;
+    state.bridge_port = 56799;
     save_state(state);
     return restored;
 }

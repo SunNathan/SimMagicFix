@@ -28,8 +28,16 @@ void set_cors(const httplib::Request& request, httplib::Response& response) {
         response.set_header("Access-Control-Allow-Origin", "*");
         response.set_header("Vary", "Origin");
     }
-    response.set_header("Access-Control-Allow-Methods", "POST, OPTIONS");
-    response.set_header("Access-Control-Allow-Headers", "Content-Type");
+    response.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    const std::string requested_headers =
+        request.get_header_value("Access-Control-Request-Headers");
+    response.set_header("Access-Control-Allow-Headers",
+                        requested_headers.empty() ? "Content-Type"
+                                                  : requested_headers);
+    if (request.get_header_value("Access-Control-Request-Private-Network") ==
+        "true") {
+        response.set_header("Access-Control-Allow-Private-Network", "true");
+    }
     response.set_header("Cache-Control", "no-store");
 }
 
@@ -48,17 +56,19 @@ struct BridgeService::Impl {
     std::atomic<bool> running{false};
     std::atomic<bool> lmu_available{false};
     std::thread reader_thread;
-    std::thread server_thread;
+    std::vector<std::unique_ptr<httplib::Server>> servers;
+    std::vector<std::thread> server_threads;
+    std::vector<int> active_ports;
     std::unique_ptr<LmuReader> reader;
     mutable std::shared_mutex snapshot_mutex;
     LmuSnapshot snapshot;
     mutable std::mutex error_mutex;
     std::string last_error;
     std::mutex cache_mutex;
+    mutable std::mutex ports_mutex;
     std::string cache_key;
     std::string cache_body;
     std::chrono::steady_clock::time_point cache_time{};
-    httplib::Server server;
 
     explicit Impl(Options value) : options(value) {}
 
@@ -72,6 +82,18 @@ struct BridgeService::Impl {
     std::string get_error() const {
         std::lock_guard<std::mutex> lock(error_mutex);
         return last_error;
+    }
+
+    std::vector<int> get_ports() const {
+        std::lock_guard<std::mutex> lock(ports_mutex);
+        return active_ports;
+    }
+
+    bool is_simpro_ui_origin(const std::string& origin) const {
+        return origin ==
+                   "http://localhost:" + std::to_string(options.simpro_http_port) ||
+               origin ==
+                   "http://127.0.0.1:" + std::to_string(options.simpro_http_port);
     }
 
     LmuSnapshot get_snapshot() const {
@@ -154,10 +176,10 @@ struct BridgeService::Impl {
                 reader = std::make_unique<LmuReader>();
             }
             if (!reader->is_open()) {
-                const auto now = std::chrono::steady_clock::now();
-                if (now >= next_retry) {
+                const auto retry_now = std::chrono::steady_clock::now();
+                if (retry_now >= next_retry) {
                     reader->open();
-                    next_retry = now + std::chrono::seconds(1);
+                    next_retry = retry_now + std::chrono::seconds(1);
                 }
                 if (!reader->is_open()) {
                     lmu_available.store(false);
@@ -184,9 +206,43 @@ struct BridgeService::Impl {
         set_cors(request, response);
         const std::string body = request.body;
         nlohmann::json request_json = parse_or_object(body);
+        const std::string method =
+            request_json.contains("method") && request_json["method"].is_string()
+                ? request_json["method"].get<std::string>()
+                : "";
+        const std::string origin = request.get_header_value("Origin");
+        const bool local = origin.empty() || origin == "null" ||
+                           is_local_origin(origin);
+        if (!local) {
+            nlohmann::json error;
+            error["jsonrpc"] = "2.0";
+            error["id"] = 1;
+            if (request_json.contains("id")) {
+                error["id"] = request_json["id"];
+            }
+            error["error"] = {{"code", -32600}, {"message", "origin not allowed"}};
+            response.status = 403;
+            response.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        // The dashboards only need "query". Other methods are allowed only for
+        // the SimPro web UI, so a random local page cannot drive SimPro.
+        if (method != "query" && !origin.empty() && !is_simpro_ui_origin(origin)) {
+            nlohmann::json error;
+            error["jsonrpc"] = "2.0";
+            error["id"] = 1;
+            if (request_json.contains("id")) {
+                error["id"] = request_json["id"];
+            }
+            error["error"] = {{"code", -32601}, {"message", "method not allowed"}};
+            response.status = 403;
+            response.set_content(error.dump(), "application/json");
+            return;
+        }
 
         const auto now = std::chrono::steady_clock::now();
-        {
+        if (method == "query") {
             std::lock_guard<std::mutex> lock(cache_mutex);
             if (body == cache_key &&
                 now - cache_time < std::chrono::milliseconds(25)) {
@@ -199,54 +255,66 @@ struct BridgeService::Impl {
         const auto simpro_body =
             options.mock ? std::optional<std::string>{}
                          : post_json_to_simpro(options.simpro_port, body);
-        const std::string method =
-            request_json.contains("method") && request_json["method"].is_string()
-                ? request_json["method"].get<std::string>()
-                : "";
-
-        // The dashboards only need "query". Rejecting other methods prevents a
-        // local web page from using the bridge to drive arbitrary SimPro RPCs.
-        if (method != "query") {
-            nlohmann::json error;
-            error["jsonrpc"] = "2.0";
-            if (request_json.contains("id")) {
-                error["id"] = request_json["id"];
-            } else {
-                error["id"] = 1;
-            }
-            error["error"] = {{"code", -32601}, {"message", "method not allowed"}};
-            response.status = 403;
-            response.set_content(error.dump(), "application/json");
-            return;
-        }
-
         nlohmann::json simpro = nlohmann::json::object();
         if (simpro_body.has_value()) {
             simpro = parse_or_object(*simpro_body);
         }
+
+        if (!simpro_body.has_value() && method != "query") {
+            nlohmann::json error;
+            error["jsonrpc"] = "2.0";
+            error["id"] = 1;
+            if (request_json.contains("id")) {
+                error["id"] = request_json["id"];
+            }
+            error["error"] = {{"code", -32000}, {"message", "SimPro unavailable"}};
+            response.status = 502;
+            response.set_content(error.dump(), "application/json");
+            return;
+        }
+
         if (simpro.contains("error")) {
+            if (!simpro.contains("id") && request_json.contains("id")) {
+                simpro["id"] = request_json["id"];
+            }
+            if (!simpro.contains("jsonrpc")) {
+                simpro["jsonrpc"] = "2.0";
+            }
             response.status = 200;
             response.set_content(simpro.dump(), "application/json");
             return;
         }
 
-        const LmuSnapshot value = get_snapshot();
-        nlohmann::json result = build_response(simpro, value, options.mock);
+        if (method == "query") {
+            const LmuSnapshot value = get_snapshot();
+            nlohmann::json result = build_response(simpro, value, options.mock);
+            if (request_json.contains("id")) {
+                result["id"] = request_json["id"];
+            }
+            if (request_json.contains("jsonrpc")) {
+                result["jsonrpc"] = request_json["jsonrpc"];
+            }
+            const std::string serialized = result.dump();
+            {
+                std::lock_guard<std::mutex> lock(cache_mutex);
+                cache_key = body;
+                cache_body = serialized;
+                cache_time = now;
+            }
+            response.status = 200;
+            response.set_content(serialized, "application/json");
+            return;
+        }
+
+        // Forward non-query methods (get_config, set_config, ...) unchanged.
         if (request_json.contains("id")) {
-            result["id"] = request_json["id"];
+            simpro["id"] = request_json["id"];
         }
         if (request_json.contains("jsonrpc")) {
-            result["jsonrpc"] = request_json["jsonrpc"];
-        }
-        const std::string serialized = result.dump();
-        {
-            std::lock_guard<std::mutex> lock(cache_mutex);
-            cache_key = body;
-            cache_body = serialized;
-            cache_time = now;
+            simpro["jsonrpc"] = request_json["jsonrpc"];
         }
         response.status = 200;
-        response.set_content(serialized, "application/json");
+        response.set_content(simpro.dump(), "application/json");
     }
 
     void handle_status(const httplib::Request& request, httplib::Response& response) {
@@ -257,7 +325,12 @@ struct BridgeService::Impl {
         status["mock"] = options.mock;
         status["lmu_available"] = lmu_available.load();
         status["port"] = options.port;
+        {
+            std::lock_guard<std::mutex> lock(ports_mutex);
+            status["ports"] = active_ports;
+        }
         status["simpro_port"] = options.simpro_port;
+        status["simpro_http_port"] = options.simpro_http_port;
         status["vehicle"] = value.vehicle_name;
         status["valid"] = value.valid;
         status["tc"] = value.tc;
@@ -276,11 +349,7 @@ struct BridgeService::Impl {
         response.set_content(status.dump(), "application/json");
     }
 
-    bool start() {
-        if (running.load()) {
-            return true;
-        }
-
+    void configure_server(httplib::Server& server) {
         server.Post("/jsonrpc", [this](const httplib::Request& request,
                                        httplib::Response& response) {
             handle_jsonrpc(request, response);
@@ -300,7 +369,8 @@ struct BridgeService::Impl {
             handle_status(request, response);
         });
         server.set_exception_handler([](const httplib::Request&,
-                                        httplib::Response& response, std::exception_ptr ep) {
+                                        httplib::Response& response,
+                                        std::exception_ptr ep) {
             try {
                 if (ep) {
                     std::rethrow_exception(ep);
@@ -314,15 +384,58 @@ struct BridgeService::Impl {
             response.status = 500;
             response.set_content("internal error", "text/plain");
         });
+    }
 
-        if (!server.bind_to_port("127.0.0.1", options.port)) {
-            set_error("Port " + std::to_string(options.port) + " is already in use");
+    bool start() {
+        if (running.load()) {
+            return true;
+        }
+
+        std::vector<int> wanted{options.port};
+        if (options.fallback_port > 0 && options.fallback_port != options.port) {
+            wanted.push_back(options.fallback_port);
+        }
+
+        for (size_t i = 0; i < wanted.size(); ++i) {
+            const int port = wanted[i];
+            auto server = std::make_unique<httplib::Server>();
+            configure_server(*server);
+            if (!server->bind_to_port("127.0.0.1", port)) {
+                if (i == 0) {
+                    set_error("Port " + std::to_string(port) +
+                              " is already in use");
+                    servers.clear();
+                    {
+                        std::lock_guard<std::mutex> lock(ports_mutex);
+                        active_ports.clear();
+                    }
+                    return false;
+                }
+                set_error("Fallback port " + std::to_string(port) +
+                          " is already in use");
+                continue;
+            }
+            servers.push_back(std::move(server));
+            {
+                std::lock_guard<std::mutex> lock(ports_mutex);
+                active_ports.push_back(port);
+            }
+        }
+
+        if (servers.empty()) {
+            set_error("No port available");
             return false;
         }
 
         running.store(true);
-        server_thread = std::thread([this]() { server.listen_after_bind(); });
-        server.wait_until_ready();
+        for (auto& server : servers) {
+            httplib::Server* raw = server.get();
+            server_threads.emplace_back(
+                [raw]() { raw->listen_after_bind(); });
+        }
+        for (auto& server : servers) {
+            server->wait_until_ready();
+        }
         reader_thread = std::thread([this]() { reader_loop(); });
         return true;
     }
@@ -331,9 +444,19 @@ struct BridgeService::Impl {
         if (!running.exchange(false)) {
             return;
         }
-        server.stop();
-        if (server_thread.joinable()) {
-            server_thread.join();
+        for (auto& server : servers) {
+            server->stop();
+        }
+        for (auto& thread : server_threads) {
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+        server_threads.clear();
+        servers.clear();
+        {
+            std::lock_guard<std::mutex> lock(ports_mutex);
+            active_ports.clear();
         }
         if (reader_thread.joinable()) {
             reader_thread.join();
@@ -355,5 +478,6 @@ bool BridgeService::lmu_available() const { return impl_->lmu_available.load(); 
 LmuSnapshot BridgeService::snapshot() const { return impl_->get_snapshot(); }
 std::string BridgeService::last_error() const { return impl_->get_error(); }
 int BridgeService::port() const { return impl_->options.port; }
+std::vector<int> BridgeService::ports() const { return impl_->get_ports(); }
 
 }  // namespace simagicfix
