@@ -486,10 +486,12 @@ void finish_task() {
     EnableWindow(g_app.repair_button, TRUE);
     EnableWindow(g_app.restore_button, TRUE);
 
+    if (g_app.simpro_was_running) {
+        start_process(simpro_exe_path());
+        g_app.simpro_was_running = false;
+    }
+
     if (g_app.task_kind == TaskKind::Install) {
-        if (g_app.simpro_was_running) {
-            start_process(simpro_exe_path());
-        }
         if (g_app.task_ok) {
             g_app.state = load_state();
             g_app.scan = scan_dashboards();
@@ -524,6 +526,29 @@ void finish_task() {
     g_app.task_kind = TaskKind::None;
 }
 
+bool prepare_simpro_for_patch() {
+    g_app.simpro_was_running = process_running(L"simpro.exe");
+    if (!g_app.simpro_was_running) {
+        return true;
+    }
+    const int answer = MessageBoxW(
+        g_app.main,
+        L"SimPro Manager est ouvert.\n"
+        L"Le fermer pour appliquer le correctif, puis le relancer ?",
+        L"SimagicFix", MB_YESNO | MB_ICONQUESTION);
+    if (answer != IDYES) {
+        return false;
+    }
+    if (!close_process(L"simpro.exe")) {
+        MessageBoxW(g_app.main,
+                    L"Impossible de fermer SimPro Manager. Ferme-le "
+                    L"manuellement puis reessaie.",
+                    L"SimagicFix", MB_ICONERROR);
+        return false;
+    }
+    return true;
+}
+
 void start_install() {
     if (g_app.task_running) {
         return;
@@ -540,23 +565,8 @@ void start_install() {
         }
     }
 
-    g_app.simpro_was_running = process_running(L"simpro.exe");
-    if (g_app.simpro_was_running) {
-        const int answer = MessageBoxW(
-            g_app.main,
-            L"SimPro Manager est ouvert.\n"
-            L"Le fermer pour appliquer le correctif, puis le relancer ?",
-            L"SimagicFix", MB_YESNO | MB_ICONQUESTION);
-        if (answer != IDYES) {
-            return;
-        }
-        if (!close_process(L"simpro.exe")) {
-            MessageBoxW(g_app.main,
-                        L"Impossible de fermer SimPro Manager. Ferme-le "
-                        L"manuellement puis reessaie.",
-                        L"SimagicFix", MB_ICONERROR);
-            return;
-        }
+    if (!prepare_simpro_for_patch()) {
+        return;
     }
 
     log_line("Install requested with " + std::to_string(options.dashboards.size()) +
@@ -571,6 +581,9 @@ void start_install() {
 
 void start_repair() {
     if (!g_app.installed || g_app.task_running) {
+        return;
+    }
+    if (!prepare_simpro_for_patch()) {
         return;
     }
     run_task(TaskKind::Repair, []() {
@@ -593,6 +606,9 @@ void start_restore() {
     if (answer != IDYES) {
         return;
     }
+    if (!prepare_simpro_for_patch()) {
+        return;
+    }
     run_task(TaskKind::Restore, []() {
         g_app.task_ok = restore_all();
         g_app.task_message = "";
@@ -612,9 +628,9 @@ void do_uninstall() {
         return;
     }
     stop_bridge();
-    uninstall(true);
+    const bool restored = uninstall(true);
     remove_tray();
-    log_line("Uninstall completed");
+    log_line(restored ? "Uninstall completed" : "Uninstall completed with restore errors");
     std::error_code ec;
     const bool running_installed =
         fs::equivalent(current_exe_path(), installed_exe_path(), ec);
@@ -622,8 +638,13 @@ void do_uninstall() {
         schedule_delete_self();
     }
     MessageBoxW(g_app.main,
-                L"SimagicFix a ete desinstalle. Les dashboards ont ete restaures.",
-                L"SimagicFix", MB_ICONINFORMATION);
+                restored
+                    ? L"SimagicFix a ete desinstalle. Les dashboards ont ete restaures."
+                    : L"SimagicFix a ete desinstalle, mais certains dashboards "
+                      L"n'ont pas pu etre restaures. Les sauvegardes restent dans "
+                      L"%LOCALAPPDATA%\\SimagicFix\\backups.",
+                L"SimagicFix",
+                restored ? MB_ICONINFORMATION : MB_ICONWARNING);
     g_app.quitting = true;
     DestroyWindow(g_app.main);
 }

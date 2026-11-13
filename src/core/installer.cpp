@@ -80,6 +80,7 @@ InstallReport install(const InstallOptions& options) {
     AppState state = load_state();
     state.installed = true;
     state.auto_start = options.auto_start;
+    state.bridge_port = 56799;
     state.version = "0.1.0";
     state.install_date = now_string();
 
@@ -122,28 +123,28 @@ InstallReport repair() {
 
 bool restore_all() {
     AppState state = load_state();
-    bool ok = true;
+    std::vector<PatchedDashboard> remaining;
     for (const auto& dashboard : state.patched) {
         if (!restore_dashboard(dashboard)) {
-            ok = false;
+            remaining.push_back(dashboard);
         }
     }
-    state.patched.clear();
+    state.patched = std::move(remaining);
     save_state(state);
-    return ok;
+    return state.patched.empty();
 }
 
 bool uninstall(bool restore_dashboards) {
+    bool restored = true;
     if (restore_dashboards) {
-        restore_all();
+        restored = restore_all();
     }
     disable_autostart();
     remove_start_menu_shortcut();
     AppState state = load_state();
     state.installed = false;
-    state.patched.clear();
     save_state(state);
-    return true;
+    return restored;
 }
 
 bool schedule_delete_self() {

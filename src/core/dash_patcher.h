@@ -24,6 +24,10 @@ struct DashPatchResult {
     std::string error;
 };
 
+// True when the built-in Windows tar.exe is available (needed to read/write
+// the .dash ZIP archives).
+bool tar_available();
+
 // Scans the SimPro dashboard folder and reports which .dash files can be
 // patched. Does not modify anything.
 std::vector<DashScanResult> scan_dashboards();

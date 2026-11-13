@@ -120,7 +120,7 @@ bool apply_rule(std::string& js, const Rule& rule, bool caddy) {
         rule.old_is_string ? std::string("children:\"") + rule.old_value + "\""
                            : std::string("children:") + rule.old_value;
     const size_t value_pos = js.find(old_token, label_pos);
-    if (value_pos == std::string::npos || value_pos > label_pos + 900) {
+    if (value_pos == std::string::npos || value_pos > label_pos + 400) {
         return false;
     }
     const std::string new_token = std::string("children:") + rule.new_expression;
@@ -193,8 +193,16 @@ JsScan scan_js_dir(const fs::path& root, bool caddy) {
 
 }  // namespace
 
+bool tar_available() {
+    wchar_t path[MAX_PATH] = {};
+    return SearchPathW(nullptr, L"tar.exe", nullptr, MAX_PATH, path, nullptr) > 0;
+}
+
 std::vector<DashScanResult> scan_dashboards() {
     std::vector<DashScanResult> results;
+    if (!tar_available()) {
+        return results;
+    }
     const fs::path folder = dashboard_dir();
     std::error_code ec;
     if (!fs::is_directory(folder, ec)) {
@@ -236,6 +244,10 @@ DashPatchResult patch_dashboard(const fs::path& file) {
     result.file = file;
     result.name = file.stem().string();
     result.original_crc = file_hash(file);
+    if (!tar_available()) {
+        result.error = "tar.exe not found (Windows 10/11 is required)";
+        return result;
+    }
 
     std::error_code ec;
     const fs::path temp = make_temp_dir(result.name, "patch");
@@ -312,7 +324,10 @@ DashPatchResult patch_dashboard(const fs::path& file) {
     const JsScan scan = scan_js_dir(verify, caddy);
     fs::remove_all(verify, ec);
     if (!scan.already && scan.fixes.size() < applied.size()) {
-        result.error = "Dashboard verification failed";
+        // Put the original file back so a failed verification never leaves a
+        // half-patched dashboard behind.
+        fs::copy_file(backup, file, fs::copy_options::overwrite_existing, ec);
+        result.error = "Dashboard verification failed (original restored)";
         return result;
     }
 

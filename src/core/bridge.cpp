@@ -152,12 +152,39 @@ struct BridgeService::Impl {
         const std::string body = request.body;
         nlohmann::json request_json = parse_or_object(body);
 
-        nlohmann::json simpro = nlohmann::json::object();
-        if (!options.mock) {
-            const auto simpro_body = post_json_to_simpro(options.simpro_port, body);
+        const auto simpro_body =
+            options.mock ? std::optional<std::string>{}
+                         : post_json_to_simpro(options.simpro_port, body);
+        const std::string method =
+            request_json.contains("method") && request_json["method"].is_string()
+                ? request_json["method"].get<std::string>()
+                : "";
+
+        // Only the "query" method carries game_data/game_data_v1. Other
+        // methods are proxied untouched so the bridge stays transparent.
+        if (method != "query") {
             if (simpro_body.has_value()) {
-                simpro = parse_or_object(*simpro_body);
+                response.status = 200;
+                response.set_content(*simpro_body, "application/json");
+                return;
             }
+            nlohmann::json error;
+            error["jsonrpc"] = "2.0";
+            if (request_json.contains("id")) {
+                error["id"] = request_json["id"];
+            } else {
+                error["id"] = 1;
+            }
+            error["error"] = {{"code", -32000},
+                              {"message", "SimPro Manager is not available"}};
+            response.status = 503;
+            response.set_content(error.dump(), "application/json");
+            return;
+        }
+
+        nlohmann::json simpro = nlohmann::json::object();
+        if (simpro_body.has_value()) {
+            simpro = parse_or_object(*simpro_body);
         }
 
         const LmuSnapshot value = get_snapshot();

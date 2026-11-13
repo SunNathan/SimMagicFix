@@ -175,25 +175,29 @@ nlohmann::json build_response(const nlohmann::json& simpro_response,
         fill_defaults(gd, snapshot, mock);
     }
 
-    gd["tcLevel"] = snapshot.tc;
-    gd["tcCut"] = snapshot.tc_cut;
-    gd["absLevel"] = snapshot.abs;
-    gd["engineMap"] = snapshot.motor_map;
-    gd["soc"] = snapshot.soc_percent();
-    gd["ersPercent"] = snapshot.soc_percent();
-    gd["migration"] = snapshot.migration;
-    gd["frontAntiRollBar"] = snapshot.front_arb;
-    gd["rearAntiRollBar"] = snapshot.rear_arb;
-    gd["isTcActive"] = snapshot.tc_active ? 1 : 0;
-    gd["isAbsActive"] = snapshot.abs_active ? 1 : 0;
-    if (snapshot.oil_temp > 0.0) {
-        gd["oilTemperature"] = snapshot.oil_temp;
-    }
-    if (snapshot.water_temp > 0.0) {
-        gd["waterTemperature"] = snapshot.water_temp;
-    }
-    if (snapshot.fuel > 0.0) {
-        gd["fuel"] = snapshot.fuel;
+    // Only override SimPro's values when LMU actually provides data. This
+    // keeps the bridge transparent for other games (ACC, F1, iRacing...).
+    if (mock || snapshot.valid) {
+        gd["tcLevel"] = snapshot.tc;
+        gd["tcCut"] = snapshot.tc_cut;
+        gd["absLevel"] = snapshot.abs;
+        gd["engineMap"] = snapshot.motor_map;
+        gd["soc"] = snapshot.soc_percent();
+        gd["ersPercent"] = snapshot.soc_percent();
+        gd["migration"] = snapshot.migration;
+        gd["frontAntiRollBar"] = snapshot.front_arb;
+        gd["rearAntiRollBar"] = snapshot.rear_arb;
+        gd["isTcActive"] = snapshot.tc_active ? 1 : 0;
+        gd["isAbsActive"] = snapshot.abs_active ? 1 : 0;
+        if (snapshot.oil_temp > 0.0) {
+            gd["oilTemperature"] = snapshot.oil_temp;
+        }
+        if (snapshot.water_temp > 0.0) {
+            gd["waterTemperature"] = snapshot.water_temp;
+        }
+        if (snapshot.fuel > 0.0) {
+            gd["fuel"] = snapshot.fuel;
+        }
     }
     response["result"]["game_data"] = gd.dump();
 
@@ -208,16 +212,18 @@ nlohmann::json build_response(const nlohmann::json& simpro_response,
     if (mock || v1.empty()) {
         fill_v1_defaults(v1, snapshot);
     }
-    v1["tc"] = snapshot.tc;
-    v1["abs"] = snapshot.abs;
-    v1["map"] = snapshot.motor_map;
-    v1["tc2"] = snapshot.tc_cut;
-    v1["soc"] = static_cast<int>(std::lround(snapshot.soc_percent()));
-    v1["batt"] = static_cast<int>(std::lround(snapshot.soc_percent()));
-    v1["farb"] = snapshot.front_arb;
-    v1["rarb"] = snapshot.rear_arb;
-    v1["tc_flag"] = snapshot.tc_active ? 1 : 0;
-    v1["abs_flag"] = snapshot.abs_active ? 1 : 0;
+    if (mock || snapshot.valid) {
+        v1["tc"] = snapshot.tc;
+        v1["abs"] = snapshot.abs;
+        v1["map"] = snapshot.motor_map;
+        v1["tc2"] = snapshot.tc_cut;
+        v1["soc"] = static_cast<int>(std::lround(snapshot.soc_percent()));
+        v1["batt"] = static_cast<int>(std::lround(snapshot.soc_percent()));
+        v1["farb"] = snapshot.front_arb;
+        v1["rarb"] = snapshot.rear_arb;
+        v1["tc_flag"] = snapshot.tc_active ? 1 : 0;
+        v1["abs_flag"] = snapshot.abs_active ? 1 : 0;
+    }
     response["result"]["game_data_v1"] = v1.dump();
 
     if (!response["result"].contains("axes") || !response["result"]["axes"].is_object()) {
