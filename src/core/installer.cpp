@@ -52,8 +52,17 @@ bool install_self(const fs::path& target) {
     if (is_current_exe(target)) {
         return true;
     }
+    fs::path source = current_exe_path();
+    // When the CLI is used to install, prefer the GUI executable sitting next
+    // to it so the installed program is the user-facing one.
+    if (source.filename() == L"SimagicFixCLI.exe") {
+        const fs::path gui = source.parent_path() / L"SimagicFix.exe";
+        if (fs::is_regular_file(gui, ec)) {
+            source = gui;
+        }
+    }
     fs::create_directories(target.parent_path(), ec);
-    fs::copy_file(current_exe_path(), target, fs::copy_options::overwrite_existing, ec);
+    fs::copy_file(source, target, fs::copy_options::overwrite_existing, ec);
     return !ec;
 }
 

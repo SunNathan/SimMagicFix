@@ -69,8 +69,11 @@ std::wstring temp_root() {
 }
 
 fs::path make_temp_dir(const std::string& name, const std::string& suffix) {
-    const fs::path root = fs::path(temp_root()) /
-                          (utf8_to_wide(name) + L"-" + utf8_to_wide(suffix));
+    const fs::path root =
+        fs::path(temp_root()) /
+        (utf8_to_wide(name) + L"-" + utf8_to_wide(suffix) + L"-" +
+         std::to_wstring(GetCurrentProcessId()) + L"-" +
+         std::to_wstring(GetTickCount64()));
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root, ec);

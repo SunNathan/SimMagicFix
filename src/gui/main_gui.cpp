@@ -46,6 +46,7 @@ enum ControlId {
     IDC_RESTORE,
     IDC_LOGS,
     IDC_QUIT,
+    IDC_UNINSTALL,
     IDC_TEST_SOURCE,
     IDC_TEST_TC,
     IDC_TEST_TCCUT,
@@ -65,6 +66,7 @@ enum MenuId {
     IDM_RESTORE,
     IDM_AUTOSTART,
     IDM_LOGS,
+    IDM_UNINSTALL,
     IDM_QUIT,
 };
 
@@ -86,6 +88,7 @@ struct App {
     HWND restore_button = nullptr;
     HWND logs_button = nullptr;
     HWND quit_button = nullptr;
+    HWND uninstall_button = nullptr;
 
     HFONT font = nullptr;
     HFONT bold = nullptr;
@@ -226,13 +229,23 @@ void refresh_status() {
                          : "Le Mans Ultimate : detecte");
 
     size_t compatible = 0;
+    size_t patched = 0;
     for (const auto& item : g_app.scan) {
         if (item.compatible) {
             ++compatible;
         }
+        if (item.already_patched) {
+            ++patched;
+        }
     }
-    set_text(g_app.status_dash,
-             "Dashboards compatibles : " + std::to_string(compatible));
+    if (g_app.installed) {
+        set_text(g_app.status_dash,
+                 "Dashboards corriges : " + std::to_string(patched) + " / " +
+                     std::to_string(patched + compatible));
+    } else {
+        set_text(g_app.status_dash,
+                 "Dashboards compatibles : " + std::to_string(compatible));
+    }
 
     std::string bridge_text = "Bridge : ";
     if (g_app.bridge && g_app.bridge->running()) {
@@ -294,6 +307,7 @@ void switch_mode(bool installed) {
     ShowWindow(g_app.restore_button, show_manage);
     ShowWindow(g_app.logs_button, show_manage);
     ShowWindow(g_app.quit_button, show_manage);
+    ShowWindow(g_app.uninstall_button, show_manage);
     SetWindowTextW(g_app.main, installed ? L"SimagicFix" : L"SimagicFix - installation");
     refresh_status();
 }
@@ -395,8 +409,9 @@ LRESULT CALLBACK test_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             for (const auto& label : labels) {
                 HWND control = CreateWindowExW(
                     0, L"STATIC", label.text, WS_CHILD | WS_VISIBLE, 20, label.y,
-                    360, 26, hwnd, reinterpret_cast<HMENU>(label.id), g_app.instance,
-                    nullptr);
+                    360, 26, hwnd,
+                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(label.id)),
+                    g_app.instance, nullptr);
                 set_font(control, g_app.value_font);
             }
             HWND demo = CreateWindowExW(
@@ -411,6 +426,11 @@ LRESULT CALLBACK test_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             set_font(close, g_app.font);
             SetTimer(hwnd, 1, 100, nullptr);
             return 0;
+        }
+        case WM_CTLCOLORSTATIC: {
+            HDC hdc = reinterpret_cast<HDC>(wparam);
+            SetBkMode(hdc, TRANSPARENT);
+            return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
         }
         case WM_TIMER:
             update_test_window();
@@ -472,6 +492,8 @@ void finish_task() {
         }
         if (g_app.task_ok) {
             g_app.state = load_state();
+            g_app.scan = scan_dashboards();
+            populate_list();
             start_bridge();
             switch_mode(true);
             MessageBoxW(g_app.main,
@@ -578,6 +600,34 @@ void start_restore() {
     });
 }
 
+void do_uninstall() {
+    const int answer = MessageBoxW(
+        g_app.main,
+        L"Desinstaller SimagicFix ?\n\n"
+        L"- les dashboards d'origine seront restaures\n"
+        L"- le demarrage automatique sera retire\n"
+        L"- le raccourci du menu Demarrer sera supprime",
+        L"SimagicFix", MB_YESNO | MB_ICONWARNING);
+    if (answer != IDYES) {
+        return;
+    }
+    stop_bridge();
+    uninstall(true);
+    remove_tray();
+    log_line("Uninstall completed");
+    std::error_code ec;
+    const bool running_installed =
+        fs::equivalent(current_exe_path(), installed_exe_path(), ec);
+    if (running_installed) {
+        schedule_delete_self();
+    }
+    MessageBoxW(g_app.main,
+                L"SimagicFix a ete desinstalle. Les dashboards ont ete restaures.",
+                L"SimagicFix", MB_ICONINFORMATION);
+    g_app.quitting = true;
+    DestroyWindow(g_app.main);
+}
+
 void toggle_autostart() {
     const bool enabled = is_autostart_enabled();
     if (enabled) {
@@ -610,6 +660,9 @@ void handle_menu(int id) {
         case IDM_LOGS:
             open_logs();
             break;
+        case IDM_UNINSTALL:
+            do_uninstall();
+            break;
         case IDM_QUIT:
             g_app.quitting = true;
             DestroyWindow(g_app.main);
@@ -631,6 +684,7 @@ void show_tray_menu(HWND hwnd) {
                 IDM_AUTOSTART, L"Demarrage automatique");
     AppendMenuW(menu, MF_STRING, IDM_LOGS, L"Ouvrir les logs");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, IDM_UNINSTALL, L"Desinstaller");
     AppendMenuW(menu, MF_STRING, IDM_QUIT, L"Quitter");
 
     POINT point{};
@@ -683,7 +737,8 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             for (const auto& status : statuses) {
                 HWND control = CreateWindowExW(
                     0, L"STATIC", status.text, WS_CHILD | WS_VISIBLE, 20, status.y,
-                    600, 24, hwnd, reinterpret_cast<HMENU>(status.id),
+                    600, 24, hwnd,
+                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(status.id)),
                     g_app.instance, nullptr);
                 set_font(control, g_app.font);
                 if (status.id == IDC_STATUS_SIMPRO) {
@@ -755,11 +810,16 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             g_app.quit_button = CreateWindowExW(
                 0, L"BUTTON", L"Quitter", WS_CHILD | BS_PUSHBUTTON, 540, 225, 80, 34,
                 hwnd, reinterpret_cast<HMENU>(IDC_QUIT), g_app.instance, nullptr);
+            g_app.uninstall_button = CreateWindowExW(
+                0, L"BUTTON", L"Desinstaller", WS_CHILD | BS_PUSHBUTTON, 190, 225,
+                150, 34, hwnd, reinterpret_cast<HMENU>(IDC_UNINSTALL),
+                g_app.instance, nullptr);
             set_font(g_app.test_button, g_app.font);
             set_font(g_app.repair_button, g_app.font);
             set_font(g_app.restore_button, g_app.font);
             set_font(g_app.logs_button, g_app.font);
             set_font(g_app.quit_button, g_app.font);
+            set_font(g_app.uninstall_button, g_app.font);
 
             populate_list();
             switch_mode(g_app.installed);
@@ -777,6 +837,11 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                 ShowWindow(hwnd, SW_SHOW);
             }
             return 0;
+        }
+        case WM_CTLCOLORSTATIC: {
+            HDC hdc = reinterpret_cast<HDC>(wparam);
+            SetBkMode(hdc, TRANSPARENT);
+            return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
         }
         case WM_TIMER:
             refresh_status();
@@ -823,6 +888,9 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                 case IDC_QUIT:
                     g_app.quitting = true;
                     DestroyWindow(hwnd);
+                    break;
+                case IDC_UNINSTALL:
+                    do_uninstall();
                     break;
                 case IDC_AUTOSTART:
                     if (g_app.installed) {
@@ -925,7 +993,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 
     CreateWindowExW(WS_EX_TOOLWINDOW, kTestClass, L"SimagicFix - test",
                     WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT,
-                    CW_USEDEFAULT, 420, 320, main_window, nullptr, instance, nullptr);
+                    CW_USEDEFAULT, 560, 470, main_window, nullptr, instance, nullptr);
 
     if (g_app.installed && g_app.tray_only) {
         ShowWindow(main_window, SW_HIDE);
