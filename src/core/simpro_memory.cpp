@@ -110,10 +110,15 @@ struct SimProMemoryPatcher::Impl {
     };
 
     SnapshotProvider provider;
+    PatchMode mode;
     std::atomic<bool> running{false};
     std::atomic<bool> available{false};
     std::thread thread;
     std::thread write_thread;
+    std::thread aid_thread;
+    std::thread ers_thread;
+    std::thread arb_thread;
+    std::thread engine_map_thread;
     std::atomic<uintptr_t> primary_image{0};
     std::atomic<DWORD> simpro_pid{0};
     std::atomic<int> engine_map_value{0};
@@ -125,6 +130,7 @@ struct SimProMemoryPatcher::Impl {
     std::atomic<int> front_arb_value{0};
     std::atomic<int> rear_arb_value{0};
     std::atomic<bool> values_active{false};
+    DWORD original_priority_class = 0;
     mutable std::mutex error_mutex;
     std::string error;
     HANDLE process = nullptr;
@@ -132,7 +138,8 @@ struct SimProMemoryPatcher::Impl {
     std::vector<Target> targets;
     Pattern pattern = make_pattern();
 
-    explicit Impl(SnapshotProvider value) : provider(std::move(value)) {}
+    Impl(SnapshotProvider value, PatchMode patch_mode)
+        : provider(std::move(value)), mode(patch_mode) {}
     ~Impl() { stop(); }
 
     void set_error(const std::string& value) {
@@ -279,6 +286,10 @@ struct SimProMemoryPatcher::Impl {
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
         auto next_scan = std::chrono::steady_clock::now();
         auto next_snapshot = std::chrono::steady_clock::now();
+        const auto snapshot_interval =
+            mode == PatchMode::HighPerformance
+                ? std::chrono::milliseconds(1)
+                : std::chrono::milliseconds(5);
         LmuSnapshot snapshot;
 
         while (running.load()) {
@@ -327,7 +338,7 @@ struct SimProMemoryPatcher::Impl {
                 front_arb_value.store(snapshot.front_arb);
                 rear_arb_value.store(snapshot.rear_arb);
                 values_active.store(snapshot.valid);
-                next_snapshot = now + std::chrono::milliseconds(5);
+                next_snapshot = now + snapshot_interval;
             }
 
             if (process != nullptr && !targets.empty() && values_active.load()) {
@@ -340,6 +351,78 @@ struct SimProMemoryPatcher::Impl {
             }
         }
         timeEndPeriod(1);
+    }
+
+    enum class BlockKind { Aid, Ers, Arb, EngineMap };
+
+    void write_block(HANDLE handle, uintptr_t target, BlockKind kind) {
+        switch (kind) {
+            case BlockKind::Aid: {
+                struct AidBlock {
+                    float abs_level;
+                    float tc_level;
+                    float tc_cut;
+                } aid{abs_value.load(), tc_value.load(), tc_cut_value.load()};
+                write_bytes(handle, target + 0x68, &aid, sizeof(aid));
+                break;
+            }
+            case BlockKind::Ers: {
+                struct ErsBlock {
+                    float ers_max;
+                    float ers_stored;
+                    int ers_percent;
+                } ers{1.0f, soc_value.load(), soc_percent_value.load()};
+                write_bytes(handle, target + 0xec, &ers, sizeof(ers));
+                break;
+            }
+            case BlockKind::Arb: {
+                struct ArbBlock {
+                    int front;
+                    int rear;
+                } arb{front_arb_value.load(), rear_arb_value.load()};
+                write_bytes(handle, target + 0x204, &arb, sizeof(arb));
+                break;
+            }
+            case BlockKind::EngineMap:
+                write_int(handle, target - 0x04, engine_map_value.load());
+                break;
+        }
+    }
+
+    void block_loop(BlockKind kind) {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+        HANDLE handle = nullptr;
+        DWORD current_pid = 0;
+        while (running.load()) {
+            const uintptr_t target = primary_image.load();
+            const DWORD target_pid = simpro_pid.load();
+            if (target == 0 || target_pid == 0 || !values_active.load()) {
+                if (handle != nullptr) {
+                    CloseHandle(handle);
+                    handle = nullptr;
+                    current_pid = 0;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                continue;
+            }
+            if (handle == nullptr || current_pid != target_pid) {
+                if (handle != nullptr) {
+                    CloseHandle(handle);
+                }
+                handle = OpenProcess(PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
+                                     FALSE, target_pid);
+                current_pid = target_pid;
+                if (handle == nullptr) {
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(50));
+                    continue;
+                }
+            }
+            write_block(handle, target, kind);
+        }
+        if (handle != nullptr) {
+            CloseHandle(handle);
+        }
     }
 
     void write_loop() {
@@ -409,7 +492,17 @@ struct SimProMemoryPatcher::Impl {
         }
         running.store(true);
         thread = std::thread([this]() { loop(); });
-        write_thread = std::thread([this]() { write_loop(); });
+        if (mode == PatchMode::HighPerformance) {
+            original_priority_class = GetPriorityClass(GetCurrentProcess());
+            SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+            aid_thread = std::thread([this]() { block_loop(BlockKind::Aid); });
+            ers_thread = std::thread([this]() { block_loop(BlockKind::Ers); });
+            arb_thread = std::thread([this]() { block_loop(BlockKind::Arb); });
+            engine_map_thread =
+                std::thread([this]() { block_loop(BlockKind::EngineMap); });
+        } else {
+            write_thread = std::thread([this]() { write_loop(); });
+        }
         return true;
     }
 
@@ -423,12 +516,29 @@ struct SimProMemoryPatcher::Impl {
         if (write_thread.joinable()) {
             write_thread.join();
         }
+        if (aid_thread.joinable()) {
+            aid_thread.join();
+        }
+        if (ers_thread.joinable()) {
+            ers_thread.join();
+        }
+        if (arb_thread.joinable()) {
+            arb_thread.join();
+        }
+        if (engine_map_thread.joinable()) {
+            engine_map_thread.join();
+        }
+        if (original_priority_class != 0) {
+            SetPriorityClass(GetCurrentProcess(), original_priority_class);
+            original_priority_class = 0;
+        }
         close_process();
     }
 };
 
-SimProMemoryPatcher::SimProMemoryPatcher(SnapshotProvider provider)
-    : impl_(std::make_unique<Impl>(std::move(provider))) {}
+SimProMemoryPatcher::SimProMemoryPatcher(SnapshotProvider provider,
+                                         PatchMode mode)
+    : impl_(std::make_unique<Impl>(std::move(provider), mode)) {}
 SimProMemoryPatcher::~SimProMemoryPatcher() = default;
 
 bool SimProMemoryPatcher::start() { return impl_->start(); }

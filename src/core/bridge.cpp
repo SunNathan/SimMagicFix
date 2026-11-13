@@ -173,7 +173,9 @@ struct BridgeService::Impl {
             } else {
                 lmu_available.store(false);
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(options.poll_ms > 0 ? options.poll_ms
+                                                              : 20));
         }
         if (reader) {
             reader->close();

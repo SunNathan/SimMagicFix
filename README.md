@@ -82,15 +82,19 @@ Si l'auto-démarrage est désactivé, le correctif n'est actif que lorsque l'app
 SimPro rend le dashboard du volant nativement. Pour que TC, TC Cut, ABS, Motor Map, SoC et ARB avant/arrière apparaissent sur le volant, SimagicFix écrit ces valeurs directement dans le buffer `game_data` du processus SimPro.
 
 - Activer la case **« Patch memoire SimPro (experimental) »** dans la fenêtre principale.
+- Choisir le mode de performance :
+  - **Faible performance** (par défaut) : un seul thread d’écriture, bridge à 20 ms, environ 1 cœur CPU.
+  - **Performance maximale** (expérimental) : un thread par groupe de valeurs, bridge à 2 ms, snapshot à 1 ms, environ 4 cœurs CPU.
 - Le patch démarre avec le bridge et s'arrête avec lui.
 - Il ne modifie aucun fichier SimPro et ne touche pas au processus du jeu.
-- Il utilise un cœur CPU pendant une session LMU active.
+- Il utilise un cœur CPU pendant une session LMU active (davantage en mode performance maximale).
 - Les offsets sont spécifiques à SimPro 2.1.8 ; une mise à jour de SimPro peut les invalider.
 
 Diagnostic :
 
 ```bat
 SimagicFixCLI.exe patch-memory 30
+SimagicFixCLI.exe patch-memory 30 --max
 ```
 
 ## Outils de diagnostic
@@ -100,6 +104,7 @@ SimagicFixCLI.exe selftest
 SimagicFixCLI.exe probe
 SimagicFixCLI.exe mock-shm 30
 SimagicFixCLI.exe patch-memory 30
+SimagicFixCLI.exe patch-memory 30 --max
 SimagicFixCLI.exe run --mock
 ```
 

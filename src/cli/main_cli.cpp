@@ -29,7 +29,8 @@ void print_help() {
         << "  selftest                 Print LMU SDK struct sizes/offsets\n"
         << "  probe                    Dump live LMU values\n"
         << "  mock-shm [SECONDS]       Create a fake LMU_Data mapping\n"
-        << "  patch-memory [SECONDS]   Write LMU aids into SimPro game_data\n"
+        << "  patch-memory [SECONDS] [--max]\n"
+        << "                           Write LMU aids into SimPro game_data\n"
         << "  run [--mock] [--port N] [--simpro-port N]\n"
         << "  install [--no-autostart]\n"
         << "  autostart --enable|--disable|--status\n";
@@ -56,9 +57,14 @@ int command_install(const std::vector<std::string>& args) {
 
 int command_patch_memory(const std::vector<std::string>& args) {
     int seconds = 10;
-    if (!args.empty()) {
+    bool high_performance = false;
+    for (const auto& arg : args) {
+        if (arg == "--max") {
+            high_performance = true;
+            continue;
+        }
         try {
-            seconds = std::stoi(args[0]);
+            seconds = std::stoi(arg);
         } catch (...) {
         }
     }
@@ -66,20 +72,24 @@ int command_patch_memory(const std::vector<std::string>& args) {
     options.port = 56799;
     options.simpro_port = simagicfix::simpro_rpc_port();
     options.mock = false;
+    options.poll_ms = high_performance ? 2 : 20;
     simagicfix::BridgeService bridge(options);
     if (!bridge.start()) {
         std::cout << "Cannot start bridge: " << bridge.last_error() << "\n";
         return 1;
     }
     simagicfix::SimProMemoryPatcher patcher(
-        [&bridge]() { return bridge.snapshot(); });
+        [&bridge]() { return bridge.snapshot(); },
+        high_performance ? simagicfix::PatchMode::HighPerformance
+                         : simagicfix::PatchMode::LowCpu);
     if (!patcher.start()) {
         std::cout << "Cannot start memory patcher\n";
         bridge.stop();
         return 1;
     }
-    std::cout << "Memory patcher started (SimPro RPC " << options.simpro_port
-              << ")\n";
+    std::cout << "Memory patcher started ("
+              << (high_performance ? "high performance" : "low performance")
+              << " mode, SimPro RPC " << options.simpro_port << ")\n";
     for (int i = 0; i < seconds; ++i) {
         Sleep(1000);
         const auto snapshot = bridge.snapshot();

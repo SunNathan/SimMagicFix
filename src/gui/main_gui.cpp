@@ -47,6 +47,8 @@ enum ControlId {
     IDC_QUIT,
     IDC_UNINSTALL,
     IDC_MEMORY_PATCH,
+    IDC_MODE_LOW,
+    IDC_MODE_HIGH,
     IDC_TEST_SOURCE,
     IDC_TEST_TC,
     IDC_TEST_TCCUT,
@@ -87,6 +89,8 @@ struct App {
     HWND quit_button = nullptr;
     HWND uninstall_button = nullptr;
     HWND memory_patch_checkbox = nullptr;
+    HWND mode_low = nullptr;
+    HWND mode_high = nullptr;
 
     HFONT font = nullptr;
     HFONT bold = nullptr;
@@ -146,13 +150,21 @@ void start_memory_patcher() {
     if (g_app.memory_patcher && g_app.memory_patcher->running()) {
         return;
     }
-    g_app.memory_patcher = std::make_unique<SimProMemoryPatcher>([]() {
-        return g_app.bridge ? g_app.bridge->snapshot() : LmuSnapshot{};
-    });
+    const PatchMode mode = g_app.state.memory_patch_mode == 1
+                               ? PatchMode::HighPerformance
+                               : PatchMode::LowCpu;
+    g_app.memory_patcher = std::make_unique<SimProMemoryPatcher>(
+        []() {
+            return g_app.bridge ? g_app.bridge->snapshot() : LmuSnapshot{};
+        },
+        mode);
     if (!g_app.memory_patcher->start()) {
         log_line("Memory patcher start failed");
     } else {
-        log_line("Memory patcher started");
+        log_line(std::string("Memory patcher started (") +
+                 (mode == PatchMode::HighPerformance ? "high performance"
+                                                     : "low performance") +
+                 " mode)");
     }
 }
 
@@ -172,6 +184,7 @@ void start_bridge() {
     options.port = g_app.state.bridge_port > 0 ? g_app.state.bridge_port : 56799;
     options.simpro_port = simpro_rpc_port();
     options.mock = false;
+    options.poll_ms = g_app.state.memory_patch_mode == 1 ? 2 : 20;
     g_app.bridge = std::make_unique<BridgeService>(options);
     if (!g_app.bridge->start()) {
         log_line("Bridge start failed: " + g_app.bridge->last_error());
@@ -282,6 +295,17 @@ void refresh_status() {
         SendMessageW(g_app.memory_patch_checkbox, BM_SETCHECK,
                      g_app.state.memory_patch ? BST_CHECKED : BST_UNCHECKED, 0);
     }
+    if (g_app.mode_low != nullptr && g_app.mode_high != nullptr) {
+        const bool high = g_app.state.memory_patch_mode == 1;
+        SendMessageW(g_app.mode_low, BM_SETCHECK,
+                     high ? BST_UNCHECKED : BST_CHECKED, 0);
+        SendMessageW(g_app.mode_high, BM_SETCHECK,
+                     high ? BST_CHECKED : BST_UNCHECKED, 0);
+        const BOOL enabled =
+            (g_app.installed && g_app.state.memory_patch) ? TRUE : FALSE;
+        EnableWindow(g_app.mode_low, enabled);
+        EnableWindow(g_app.mode_high, enabled);
+    }
 
     if (g_app.installed) {
         const bool autostart = is_autostart_enabled();
@@ -309,6 +333,8 @@ void switch_mode(bool installed) {
     ShowWindow(g_app.quit_button, show_manage);
     ShowWindow(g_app.uninstall_button, show_manage);
     ShowWindow(g_app.memory_patch_checkbox, show_manage);
+    ShowWindow(g_app.mode_low, show_manage);
+    ShowWindow(g_app.mode_high, show_manage);
     ShowWindow(g_app.status_memory, show_manage);
     SetWindowTextW(g_app.main,
                    installed ? L"SimagicFix" : L"SimagicFix - installation");
@@ -690,42 +716,53 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                 nullptr);
             set_font(g_app.memory_patch_checkbox, g_app.font);
 
+            g_app.mode_low = CreateWindowExW(
+                0, L"BUTTON", L"Faible performance (1 coeur)",
+                WS_CHILD | BS_AUTORADIOBUTTON | WS_GROUP, 40, 198, 580, 24, hwnd,
+                reinterpret_cast<HMENU>(IDC_MODE_LOW), g_app.instance, nullptr);
+            set_font(g_app.mode_low, g_app.font);
+            g_app.mode_high = CreateWindowExW(
+                0, L"BUTTON", L"Performance maximale (experimental)",
+                WS_CHILD | BS_AUTORADIOBUTTON, 40, 224, 580, 24, hwnd,
+                reinterpret_cast<HMENU>(IDC_MODE_HIGH), g_app.instance, nullptr);
+            set_font(g_app.mode_high, g_app.font);
+
             g_app.autostart = CreateWindowExW(
                 0, L"BUTTON",
                 L"Lancer SimagicFix au demarrage de Windows",
-                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 202, 600, 26, hwnd,
+                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 256, 600, 26, hwnd,
                 reinterpret_cast<HMENU>(IDC_AUTOSTART), g_app.instance, nullptr);
             set_font(g_app.autostart, g_app.font);
 
             g_app.progress = CreateWindowExW(
-                0, PROGRESS_CLASSW, L"", WS_CHILD | PBS_MARQUEE, 20, 236, 600, 16,
+                0, PROGRESS_CLASSW, L"", WS_CHILD | PBS_MARQUEE, 20, 290, 600, 16,
                 hwnd, reinterpret_cast<HMENU>(IDC_PROGRESS), g_app.instance, nullptr);
 
             g_app.install = CreateWindowExW(
                 0, L"BUTTON", L"Installer SimagicFix",
-                WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 380, 266, 140, 34, hwnd,
+                WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 380, 320, 140, 34, hwnd,
                 reinterpret_cast<HMENU>(IDC_INSTALL), g_app.instance, nullptr);
             set_font(g_app.install, g_app.font);
             g_app.cancel = CreateWindowExW(
                 0, L"BUTTON", L"Annuler", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 530,
-                266, 90, 34, hwnd, reinterpret_cast<HMENU>(IDC_CANCEL),
+                320, 90, 34, hwnd, reinterpret_cast<HMENU>(IDC_CANCEL),
                 g_app.instance, nullptr);
             set_font(g_app.cancel, g_app.font);
 
             g_app.test_button = CreateWindowExW(
                 0, L"BUTTON", L"Tester", WS_CHILD | BS_PUSHBUTTON, 20,
-                266, 110, 34, hwnd, reinterpret_cast<HMENU>(IDC_TEST),
+                320, 110, 34, hwnd, reinterpret_cast<HMENU>(IDC_TEST),
                 g_app.instance, nullptr);
             g_app.logs_button = CreateWindowExW(
-                0, L"BUTTON", L"Ouvrir les logs", WS_CHILD | BS_PUSHBUTTON, 140, 266,
+                0, L"BUTTON", L"Ouvrir les logs", WS_CHILD | BS_PUSHBUTTON, 140, 320,
                 150, 34, hwnd, reinterpret_cast<HMENU>(IDC_LOGS), g_app.instance,
                 nullptr);
             g_app.uninstall_button = CreateWindowExW(
-                0, L"BUTTON", L"Desinstaller", WS_CHILD | BS_PUSHBUTTON, 300, 266,
+                0, L"BUTTON", L"Desinstaller", WS_CHILD | BS_PUSHBUTTON, 300, 320,
                 140, 34, hwnd, reinterpret_cast<HMENU>(IDC_UNINSTALL),
                 g_app.instance, nullptr);
             g_app.quit_button = CreateWindowExW(
-                0, L"BUTTON", L"Quitter", WS_CHILD | BS_PUSHBUTTON, 450, 266, 110, 34,
+                0, L"BUTTON", L"Quitter", WS_CHILD | BS_PUSHBUTTON, 450, 320, 110, 34,
                 hwnd, reinterpret_cast<HMENU>(IDC_QUIT), g_app.instance, nullptr);
             set_font(g_app.test_button, g_app.font);
             set_font(g_app.logs_button, g_app.font);
@@ -805,10 +842,20 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                             SendMessageW(g_app.memory_patch_checkbox,
                                          BM_GETCHECK, 0, 0) == BST_CHECKED;
                         save_state(g_app.state);
-                        if (g_app.state.memory_patch) {
-                            start_memory_patcher();
-                        } else {
-                            stop_memory_patcher();
+                        stop_bridge();
+                        start_bridge();
+                        refresh_status();
+                    }
+                    break;
+                case IDC_MODE_LOW:
+                case IDC_MODE_HIGH:
+                    if (g_app.installed) {
+                        const int mode = id == IDC_MODE_HIGH ? 1 : 0;
+                        if (g_app.state.memory_patch_mode != mode) {
+                            g_app.state.memory_patch_mode = mode;
+                            save_state(g_app.state);
+                            stop_bridge();
+                            start_bridge();
                         }
                         refresh_status();
                     }
@@ -925,7 +972,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     HWND main_window = CreateWindowExW(
         0, kMainClass, L"SimagicFix",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, CW_USEDEFAULT,
-        CW_USEDEFAULT, 640, 400, nullptr, nullptr, instance, nullptr);
+        CW_USEDEFAULT, 640, 460, nullptr, nullptr, instance, nullptr);
     if (main_window == nullptr) {
         return 1;
     }

@@ -10,6 +10,7 @@ public:
         int port = 56799;
         int simpro_port = 56789;
         bool mock = false;
+        int poll_ms = 20;
     };
 
     explicit BridgeService(Options options);

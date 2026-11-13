@@ -8,6 +8,11 @@
 
 namespace simagicfix {
 
+enum class PatchMode {
+    LowCpu,          // One combined writer thread, 20 ms LMU polling.
+    HighPerformance  // One writer thread per value group, 2 ms LMU polling.
+};
+
 // Experimental bridge between LMU telemetry and SimPro's in-memory game_data
 // buffers. SimPro renders the wheel dashboard natively and does not use the
 // dashboard HTTP endpoint, so the only way to feed TC/TC Cut/ABS/MAP/SoC/ARB
@@ -16,7 +21,9 @@ class SimProMemoryPatcher {
 public:
     using SnapshotProvider = std::function<LmuSnapshot()>;
 
-    explicit SimProMemoryPatcher(SnapshotProvider provider);
+    explicit SimProMemoryPatcher(
+        SnapshotProvider provider,
+        PatchMode mode = PatchMode::LowCpu);
     ~SimProMemoryPatcher();
 
     SimProMemoryPatcher(const SimProMemoryPatcher&) = delete;
