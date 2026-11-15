@@ -48,7 +48,7 @@ enum ControlId {
     IDC_UNINSTALL,
     IDC_MEMORY_PATCH,
     IDC_MODE_LOW,
-    IDC_MODE_HIGH,
+    IDC_MODE_HOOK,
     IDC_TEST_SOURCE,
     IDC_TEST_TC,
     IDC_TEST_TCCUT,
@@ -90,13 +90,14 @@ struct App {
     HWND uninstall_button = nullptr;
     HWND memory_patch_checkbox = nullptr;
     HWND mode_low = nullptr;
-    HWND mode_high = nullptr;
+    HWND mode_hook = nullptr;
 
     HFONT font = nullptr;
     HFONT bold = nullptr;
     HFONT value_font = nullptr;
 
     AppState state;
+    std::string last_hook_error;
     bool installed = false;
     bool tray_only = false;
     bool quitting = false;
@@ -150,9 +151,10 @@ void start_memory_patcher() {
     if (g_app.memory_patcher && g_app.memory_patcher->running()) {
         return;
     }
-    const PatchMode mode = g_app.state.memory_patch_mode == 1
-                               ? PatchMode::HighPerformance
+    const PatchMode mode = g_app.state.memory_patch_mode == 2
+                               ? PatchMode::Hook
                                : PatchMode::LowCpu;
+    g_app.last_hook_error.clear();
     g_app.memory_patcher = std::make_unique<SimProMemoryPatcher>(
         []() {
             return g_app.bridge ? g_app.bridge->snapshot() : LmuSnapshot{};
@@ -162,8 +164,7 @@ void start_memory_patcher() {
         log_line("Memory patcher start failed");
     } else {
         log_line(std::string("Memory patcher started (") +
-                 (mode == PatchMode::HighPerformance ? "high performance"
-                                                     : "low performance") +
+                 (mode == PatchMode::Hook ? "hook" : "low performance") +
                  " mode)");
     }
 }
@@ -184,7 +185,7 @@ void start_bridge() {
     options.port = g_app.state.bridge_port > 0 ? g_app.state.bridge_port : 56799;
     options.simpro_port = simpro_rpc_port();
     options.mock = false;
-    options.poll_ms = g_app.state.memory_patch_mode == 1 ? 2 : 20;
+    options.poll_ms = g_app.state.memory_patch_mode == 2 ? 2 : 20;
     g_app.bridge = std::make_unique<BridgeService>(options);
     if (!g_app.bridge->start()) {
         log_line("Bridge start failed: " + g_app.bridge->last_error());
@@ -283,9 +284,20 @@ void refresh_status() {
 
     std::string memory_text = "Patch memoire : ";
     if (g_app.memory_patcher && g_app.memory_patcher->running()) {
-        memory_text += g_app.memory_patcher->available()
-                           ? "actif"
-                           : "en attente (SimPro non detecte)";
+        if (g_app.state.memory_patch_mode == 2) {
+            const bool installed = g_app.memory_patcher->hook_installed();
+            memory_text += installed ? "actif (hook)" : "hook en attente";
+            const std::string error = g_app.memory_patcher->last_error();
+            if (!installed && !error.empty() &&
+                error != g_app.last_hook_error) {
+                g_app.last_hook_error = error;
+                log_line("Hook mode: " + error);
+            }
+        } else {
+            memory_text += g_app.memory_patcher->available()
+                               ? "actif"
+                               : "en attente (SimPro non detecte)";
+        }
     } else {
         memory_text += "arrete";
     }
@@ -295,16 +307,16 @@ void refresh_status() {
         SendMessageW(g_app.memory_patch_checkbox, BM_SETCHECK,
                      g_app.state.memory_patch ? BST_CHECKED : BST_UNCHECKED, 0);
     }
-    if (g_app.mode_low != nullptr && g_app.mode_high != nullptr) {
-        const bool high = g_app.state.memory_patch_mode == 1;
+    if (g_app.mode_low != nullptr && g_app.mode_hook != nullptr) {
+        const bool hook = g_app.state.memory_patch_mode == 2;
         SendMessageW(g_app.mode_low, BM_SETCHECK,
-                     high ? BST_UNCHECKED : BST_CHECKED, 0);
-        SendMessageW(g_app.mode_high, BM_SETCHECK,
-                     high ? BST_CHECKED : BST_UNCHECKED, 0);
+                     hook ? BST_UNCHECKED : BST_CHECKED, 0);
+        SendMessageW(g_app.mode_hook, BM_SETCHECK,
+                     hook ? BST_CHECKED : BST_UNCHECKED, 0);
         const BOOL enabled =
             (g_app.installed && g_app.state.memory_patch) ? TRUE : FALSE;
         EnableWindow(g_app.mode_low, enabled);
-        EnableWindow(g_app.mode_high, enabled);
+        EnableWindow(g_app.mode_hook, enabled);
     }
 
     if (g_app.installed) {
@@ -334,7 +346,7 @@ void switch_mode(bool installed) {
     ShowWindow(g_app.uninstall_button, show_manage);
     ShowWindow(g_app.memory_patch_checkbox, show_manage);
     ShowWindow(g_app.mode_low, show_manage);
-    ShowWindow(g_app.mode_high, show_manage);
+    ShowWindow(g_app.mode_hook, show_manage);
     ShowWindow(g_app.status_memory, show_manage);
     SetWindowTextW(g_app.main,
                    installed ? L"SimagicFix" : L"SimagicFix - installation");
@@ -721,11 +733,11 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                 WS_CHILD | BS_AUTORADIOBUTTON | WS_GROUP, 40, 198, 580, 24, hwnd,
                 reinterpret_cast<HMENU>(IDC_MODE_LOW), g_app.instance, nullptr);
             set_font(g_app.mode_low, g_app.font);
-            g_app.mode_high = CreateWindowExW(
-                0, L"BUTTON", L"Performance maximale (experimental)",
+            g_app.mode_hook = CreateWindowExW(
+                0, L"BUTTON", L"Hook SimPro (experimental)",
                 WS_CHILD | BS_AUTORADIOBUTTON, 40, 224, 580, 24, hwnd,
-                reinterpret_cast<HMENU>(IDC_MODE_HIGH), g_app.instance, nullptr);
-            set_font(g_app.mode_high, g_app.font);
+                reinterpret_cast<HMENU>(IDC_MODE_HOOK), g_app.instance, nullptr);
+            set_font(g_app.mode_hook, g_app.font);
 
             g_app.autostart = CreateWindowExW(
                 0, L"BUTTON",
@@ -848,9 +860,9 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                     }
                     break;
                 case IDC_MODE_LOW:
-                case IDC_MODE_HIGH:
+                case IDC_MODE_HOOK:
                     if (g_app.installed) {
-                        const int mode = id == IDC_MODE_HIGH ? 1 : 0;
+                        const int mode = id == IDC_MODE_HOOK ? 2 : 0;
                         if (g_app.state.memory_patch_mode != mode) {
                             g_app.state.memory_patch_mode = mode;
                             save_state(g_app.state);

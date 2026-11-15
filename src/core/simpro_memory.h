@@ -10,7 +10,8 @@ namespace simagicfix {
 
 enum class PatchMode {
     LowCpu,          // One combined writer thread, 20 ms LMU polling.
-    HighPerformance  // One writer thread per value group, 2 ms LMU polling.
+    HighPerformance, // One writer thread per value group, 2 ms LMU polling.
+    Hook             // Inline hook inside SimPro, 2 ms LMU polling.
 };
 
 // Experimental bridge between LMU telemetry and SimPro's in-memory game_data
@@ -33,6 +34,7 @@ public:
     void stop();
     bool running() const;
     bool available() const;
+    bool hook_installed() const;
     std::string last_error() const;
 
 private:

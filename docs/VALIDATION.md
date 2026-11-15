@@ -77,14 +77,15 @@ Le JSON doit indiquer `"lmu_available": true` et les valeurs courantes.
 
 - Ouvrir SimPro Manager.
 - Activer **« Patch memoire SimPro (experimental) »** dans SimagicFix.
+- Choisir **« Hook SimPro (experimental) »** pour le mode déterministe.
 - Vérifier que TC / TC Cut / MAP / SoC / ARB avant / ARB arrière changent quand on agit dans le MFD.
 
 Si le volant affiche 0 :
 
 - Vérifier que le bridge tourne (`/status`).
-- Vérifier que le patch mémoire est actif (statut « Patch memoire : actif »).
-- Lancer `SimagicFixCLI.exe patch-memory 30` pour voir les valeurs et les erreurs.
-- Vérifier que SimPro n'a pas été mis à jour entre-temps (les offsets sont spécifiques à 2.1.8).
+- Vérifier que le patch mémoire est actif (statut « Patch memoire : actif (hook) »).
+- Lancer `SimagicFixCLI.exe patch-memory 30 --hook` pour voir les valeurs et les erreurs.
+- Vérifier que SimPro n'a pas été mis à jour entre-temps (les offsets et l'adresse du hook sont spécifiques à 2.1.8).
 
 ## 7. Points à confirmer
 

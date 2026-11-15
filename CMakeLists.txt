@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(SimagicFix VERSION 0.2.0 LANGUAGES C CXX)
+project(SimagicFix VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -52,6 +52,7 @@ add_library(simagicfix_core STATIC
   src/core/merge.cpp
   src/core/bridge.cpp
   src/core/simpro_memory.cpp
+  src/core/simpro_hook.cpp
   src/core/autostart.cpp
   src/core/installer.cpp
 )
@@ -96,6 +97,35 @@ if(SIMAGICFIX_BUILD_GUI)
 endif()
 
 # ---------------------------------------------------------------------------
+# Hook DLL (injected into SimPro)
+# ---------------------------------------------------------------------------
+add_library(SimagicFixHook SHARED
+  src/hook/hook.cpp
+  third_party/minhook/src/hook.c
+  third_party/minhook/src/buffer.c
+  third_party/minhook/src/trampoline.c
+  third_party/minhook/src/hde/hde64.c
+)
+target_include_directories(SimagicFixHook PRIVATE
+  src
+  third_party/minhook/include
+  third_party/minhook/src
+  third_party/minhook/src/hde
+)
+target_compile_definitions(SimagicFixHook PRIVATE
+  NOMINMAX
+  WIN32_LEAN_AND_MEAN
+  _WIN32_WINNT=0x0A00
+  _CRT_SECURE_NO_WARNINGS
+  UNICODE
+  _UNICODE)
+set_target_properties(SimagicFixHook PROPERTIES
+  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+target_link_libraries(SimagicFixHook PRIVATE version)
+target_compile_options(SimagicFixHook PRIVATE
+  /W4 /permissive- /utf-8 /Zc:__cplusplus)
+
+# ---------------------------------------------------------------------------
 # Warnings
 # ---------------------------------------------------------------------------
 if(MSVC)
@@ -110,6 +140,7 @@ if(MSVC)
 endif()
 
 install(TARGETS SimagicFixCLI RUNTIME DESTINATION .)
+install(TARGETS SimagicFixHook RUNTIME DESTINATION .)
 if(TARGET SimagicFix)
   install(TARGETS SimagicFix RUNTIME DESTINATION .)
 endif()

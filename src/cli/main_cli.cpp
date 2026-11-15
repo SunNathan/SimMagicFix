@@ -29,7 +29,7 @@ void print_help() {
         << "  selftest                 Print LMU SDK struct sizes/offsets\n"
         << "  probe                    Dump live LMU values\n"
         << "  mock-shm [SECONDS]       Create a fake LMU_Data mapping\n"
-        << "  patch-memory [SECONDS] [--max]\n"
+        << "  patch-memory [SECONDS] [--hook] [--mock]\n"
         << "                           Write LMU aids into SimPro game_data\n"
         << "  run [--mock] [--port N] [--simpro-port N]\n"
         << "  install [--no-autostart]\n"
@@ -58,9 +58,19 @@ int command_install(const std::vector<std::string>& args) {
 int command_patch_memory(const std::vector<std::string>& args) {
     int seconds = 10;
     bool high_performance = false;
+    bool hook = false;
+    bool mock = false;
     for (const auto& arg : args) {
         if (arg == "--max") {
             high_performance = true;
+            continue;
+        }
+        if (arg == "--hook") {
+            hook = true;
+            continue;
+        }
+        if (arg == "--mock") {
+            mock = true;
             continue;
         }
         try {
@@ -71,30 +81,34 @@ int command_patch_memory(const std::vector<std::string>& args) {
     simagicfix::BridgeService::Options options;
     options.port = 56799;
     options.simpro_port = simagicfix::simpro_rpc_port();
-    options.mock = false;
-    options.poll_ms = high_performance ? 2 : 20;
+    options.mock = mock;
+    options.poll_ms = (hook || high_performance) ? 2 : 20;
     simagicfix::BridgeService bridge(options);
     if (!bridge.start()) {
         std::cout << "Cannot start bridge: " << bridge.last_error() << "\n";
         return 1;
     }
+    const simagicfix::PatchMode mode =
+        hook ? simagicfix::PatchMode::Hook
+             : (high_performance ? simagicfix::PatchMode::HighPerformance
+                                 : simagicfix::PatchMode::LowCpu);
     simagicfix::SimProMemoryPatcher patcher(
-        [&bridge]() { return bridge.snapshot(); },
-        high_performance ? simagicfix::PatchMode::HighPerformance
-                         : simagicfix::PatchMode::LowCpu);
+        [&bridge]() { return bridge.snapshot(); }, mode);
     if (!patcher.start()) {
         std::cout << "Cannot start memory patcher\n";
         bridge.stop();
         return 1;
     }
     std::cout << "Memory patcher started ("
-              << (high_performance ? "high performance" : "low performance")
+              << (hook ? "hook" : (high_performance ? "high performance"
+                                                    : "low performance"))
               << " mode, SimPro RPC " << options.simpro_port << ")\n";
     for (int i = 0; i < seconds; ++i) {
         Sleep(1000);
         const auto snapshot = bridge.snapshot();
         std::cout << "t=" << (i + 1)
                   << " available=" << (patcher.available() ? "yes" : "no")
+                  << " hook=" << (patcher.hook_installed() ? "yes" : "no")
                   << " error=\"" << patcher.last_error() << "\""
                   << " lmu=" << (snapshot.valid ? snapshot.vehicle_name : "-")
                   << " tc=" << snapshot.tc << "/" << snapshot.tc_max

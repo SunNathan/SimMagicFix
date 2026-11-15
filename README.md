@@ -82,19 +82,20 @@ Si l'auto-démarrage est désactivé, le correctif n'est actif que lorsque l'app
 SimPro rend le dashboard du volant nativement. Pour que TC, TC Cut, ABS, Motor Map, SoC et ARB avant/arrière apparaissent sur le volant, SimagicFix écrit ces valeurs directement dans le buffer `game_data` du processus SimPro.
 
 - Activer la case **« Patch memoire SimPro (experimental) »** dans la fenêtre principale.
-- Choisir le mode de performance :
-  - **Faible performance** (par défaut) : un seul thread d’écriture, bridge à 20 ms, environ 1 cœur CPU.
-  - **Performance maximale** (expérimental) : un thread par groupe de valeurs, bridge à 2 ms, snapshot à 1 ms, environ 4 cœurs CPU.
+- Choisir le mode :
+  - **Faible performance** (par défaut) : un seul thread d’écriture externe, bridge à 20 ms, environ 1 cœur CPU.
+  - **Hook SimPro** (expérimental) : injection de `SimagicFixHook.dll` dans SimPro, hook de la fonction de copie `game_data`, bridge à 2 ms, CPU très faible.
 - Le patch démarre avec le bridge et s'arrête avec lui.
+- En mode Hook, la DLL est injectée uniquement dans **SimPro**, jamais dans LMU.
+- Si l’injection ou le hook échoue, SimagicFix revient automatiquement au mode faible performance.
 - Il ne modifie aucun fichier SimPro et ne touche pas au processus du jeu.
-- Il utilise un cœur CPU pendant une session LMU active (davantage en mode performance maximale).
-- Les offsets sont spécifiques à SimPro 2.1.8 ; une mise à jour de SimPro peut les invalider.
+- Les offsets et l’adresse du hook sont spécifiques à SimPro 2.1.8 ; une mise à jour de SimPro peut les invalider.
 
 Diagnostic :
 
 ```bat
 SimagicFixCLI.exe patch-memory 30
-SimagicFixCLI.exe patch-memory 30 --max
+SimagicFixCLI.exe patch-memory 30 --hook
 ```
 
 ## Outils de diagnostic
@@ -104,7 +105,7 @@ SimagicFixCLI.exe selftest
 SimagicFixCLI.exe probe
 SimagicFixCLI.exe mock-shm 30
 SimagicFixCLI.exe patch-memory 30
-SimagicFixCLI.exe patch-memory 30 --max
+SimagicFixCLI.exe patch-memory 30 --hook
 SimagicFixCLI.exe run --mock
 ```
 
@@ -125,13 +126,17 @@ L'icône est générée par `tools/make_icon.py` (Pillow, uniquement au build) e
 - Lecture **read-only** de la mémoire partagée officielle de LMU.
 - Aucune écriture dans le processus du jeu, aucun fichier LMU modifié.
 - Le patch mémoire écrit uniquement dans le processus **SimPro** (buffer `game_data`), jamais dans LMU.
-- Aucune injection de DLL, aucun hook.
+- Le mode faible performance n’injecte rien et n’installe aucun hook.
+- Le mode Hook injecte `SimagicFixHook.dll` dans **SimPro uniquement**, jamais dans LMU.
+- Aucun hook dans le processus du jeu.
 - Aucun fichier SimPro n'est modifié.
 
 ## Limites
 
 - Le patch mémoire est spécifique à SimPro 2.1.8 ; il peut cesser de fonctionner après une mise à jour de SimPro.
-- Le patch mémoire utilise un cœur CPU pendant une session LMU active.
+- Le mode Hook dépend de l’adresse de la fonction de copie `game_data` de SimPro 2.1.8 ; une mise à jour de SimPro peut l’invalider.
+- L’injection de DLL peut être signalée par l’antivirus ou SmartScreen.
+- Le mode faible performance utilise environ un cœur CPU pendant une session LMU active ; le mode Hook est beaucoup plus léger.
 - Une mise à jour LMU peut modifier la structure de `LMU_Data` : `selftest`/`probe` permettent de le détecter ; recompiler avec le header SDK mis à jour.
 - Le correctif ne fonctionne que si l'application (le bridge) est lancée.
 - L'exécutable n'est pas signé : Windows SmartScreen peut afficher un avertissement.
@@ -146,8 +151,9 @@ MIT. Voir `LICENSE`. L'utilisation commerciale est autorisée par la licence MIT
 - `cpp-httplib` (serveur/client HTTP local).
 - `nlohmann/json`.
 - Header SDK officiel LMU inclus depuis l'installation du jeu (non redistribué).
-- `simagicfix_core` : lecteur LMU, bridge, patch mémoire, installeur.
+- `simagicfix_core` : lecteur LMU, bridge, patch mémoire, hook, installeur.
 - `SimagicFix.exe` : interface Win32.
 - `SimagicFixCLI.exe` : diagnostics.
+- `SimagicFixHook.dll` : DLL injectée dans SimPro (mode Hook), basée sur MinHook.
 
 Voir `THIRD_PARTY_NOTICES.md` pour les licences des dépendances.

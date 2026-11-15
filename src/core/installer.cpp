@@ -23,11 +23,24 @@ bool is_current_exe(const fs::path& target) {
     return fs::equivalent(current_exe_path(), target, ec);
 }
 
+void copy_hook_dll(const fs::path& source_dir, const fs::path& target_dir) {
+    std::error_code ec;
+    const fs::path source = source_dir / L"SimagicFixHook.dll";
+    if (!fs::is_regular_file(source, ec)) {
+        return;
+    }
+    fs::create_directories(target_dir, ec);
+    fs::copy_file(source, target_dir / L"SimagicFixHook.dll",
+                  fs::copy_options::overwrite_existing, ec);
+}
+
 }  // namespace
 
 bool install_self(const fs::path& target) {
     std::error_code ec;
     if (is_current_exe(target)) {
+        copy_hook_dll(current_exe_path().parent_path(),
+                      target.parent_path());
         return true;
     }
     fs::path source = current_exe_path();
@@ -43,7 +56,11 @@ bool install_self(const fs::path& target) {
     }
     fs::create_directories(target.parent_path(), ec);
     fs::copy_file(source, target, fs::copy_options::overwrite_existing, ec);
-    return !ec;
+    if (ec) {
+        return false;
+    }
+    copy_hook_dll(source.parent_path(), target.parent_path());
+    return true;
 }
 
 InstallReport install(const InstallOptions& options) {
@@ -61,7 +78,7 @@ InstallReport install(const InstallOptions& options) {
     state.installed = true;
     state.auto_start = options.auto_start;
     state.bridge_port = 56799;
-    state.version = "0.2.0";
+    state.version = "0.3.0";
     if (state.install_date.empty()) {
         state.install_date = now_string();
     }

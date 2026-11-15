@@ -1,5 +1,8 @@
 #include "core/simpro_memory.h"
 
+#include "core/paths.h"
+#include "core/simpro_hook.h"
+
 #include <windows.h>
 #include <timeapi.h>
 
@@ -130,6 +133,10 @@ struct SimProMemoryPatcher::Impl {
     std::atomic<int> front_arb_value{0};
     std::atomic<int> rear_arb_value{0};
     std::atomic<bool> values_active{false};
+    std::unique_ptr<SimProHook> hook;
+    fs::path hook_dll_path;
+    std::atomic<bool> hook_attempted{false};
+    std::atomic<bool> hook_fallback_started{false};
     DWORD original_priority_class = 0;
     mutable std::mutex error_mutex;
     std::string error;
@@ -139,7 +146,10 @@ struct SimProMemoryPatcher::Impl {
     Pattern pattern = make_pattern();
 
     Impl(SnapshotProvider value, PatchMode patch_mode)
-        : provider(std::move(value)), mode(patch_mode) {}
+        : provider(std::move(value)), mode(patch_mode) {
+        hook_dll_path =
+            current_exe_path().parent_path() / L"SimagicFixHook.dll";
+    }
     ~Impl() { stop(); }
 
     void set_error(const std::string& value) {
@@ -161,6 +171,11 @@ struct SimProMemoryPatcher::Impl {
         simpro_pid.store(0);
         primary_image.store(0);
         values_active.store(false);
+        hook_attempted.store(false);
+        hook_fallback_started.store(false);
+        if (hook) {
+            hook->set_active(false);
+        }
         targets.clear();
         available.store(false);
     }
@@ -281,13 +296,31 @@ struct SimProMemoryPatcher::Impl {
         }
     }
 
+    void ensure_hook(const LmuSnapshot& snapshot) {
+        if (!hook || hook->installed() || hook_attempted.load()) {
+            return;
+        }
+        hook_attempted.store(true);
+        hook->update(snapshot);
+        if (hook->start(pid, hook_dll_path)) {
+            available.store(true);
+            set_error("");
+            return;
+        }
+        set_error(hook->last_error_text());
+        // Graceful fallback: keep the wheel working with the external writer.
+        if (!hook_fallback_started.exchange(true)) {
+            write_thread = std::thread([this]() { write_loop(); });
+        }
+    }
+
     void loop() {
         timeBeginPeriod(1);
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
         auto next_scan = std::chrono::steady_clock::now();
         auto next_snapshot = std::chrono::steady_clock::now();
         const auto snapshot_interval =
-            mode == PatchMode::HighPerformance
+            (mode == PatchMode::HighPerformance || mode == PatchMode::Hook)
                 ? std::chrono::milliseconds(1)
                 : std::chrono::milliseconds(5);
         LmuSnapshot snapshot;
@@ -338,12 +371,22 @@ struct SimProMemoryPatcher::Impl {
                 front_arb_value.store(snapshot.front_arb);
                 rear_arb_value.store(snapshot.rear_arb);
                 values_active.store(snapshot.valid);
+                if (hook) {
+                    hook->update(snapshot);
+                }
                 next_snapshot = now + snapshot_interval;
             }
 
-            if (process != nullptr && !targets.empty() && values_active.load()) {
-                // The dedicated write thread owns the actual memory writes.
-                // Keep this loop light so it does not steal CPU from it.
+            if (mode == PatchMode::Hook && process != nullptr) {
+                ensure_hook(snapshot);
+            }
+
+            const bool live =
+                process != nullptr && values_active.load() &&
+                (mode == PatchMode::Hook || !targets.empty());
+            if (live) {
+                // The dedicated write thread (or the in-process hook) owns the
+                // actual writes. Keep this loop light.
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             } else {
                 // Do not burn a core while LMU is not in a live session.
@@ -490,6 +533,11 @@ struct SimProMemoryPatcher::Impl {
         if (running.load()) {
             return true;
         }
+        if (mode == PatchMode::Hook) {
+            hook = std::make_unique<SimProHook>();
+            original_priority_class = GetPriorityClass(GetCurrentProcess());
+            SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+        }
         running.store(true);
         thread = std::thread([this]() { loop(); });
         if (mode == PatchMode::HighPerformance) {
@@ -500,7 +548,7 @@ struct SimProMemoryPatcher::Impl {
             arb_thread = std::thread([this]() { block_loop(BlockKind::Arb); });
             engine_map_thread =
                 std::thread([this]() { block_loop(BlockKind::EngineMap); });
-        } else {
+        } else if (mode == PatchMode::LowCpu) {
             write_thread = std::thread([this]() { write_loop(); });
         }
         return true;
@@ -509,6 +557,9 @@ struct SimProMemoryPatcher::Impl {
     void stop() {
         if (!running.exchange(false)) {
             return;
+        }
+        if (hook) {
+            hook->set_active(false);
         }
         if (thread.joinable()) {
             thread.join();
@@ -528,6 +579,10 @@ struct SimProMemoryPatcher::Impl {
         if (engine_map_thread.joinable()) {
             engine_map_thread.join();
         }
+        if (hook) {
+            hook->stop();
+            hook.reset();
+        }
         if (original_priority_class != 0) {
             SetPriorityClass(GetCurrentProcess(), original_priority_class);
             original_priority_class = 0;
@@ -545,6 +600,9 @@ bool SimProMemoryPatcher::start() { return impl_->start(); }
 void SimProMemoryPatcher::stop() { impl_->stop(); }
 bool SimProMemoryPatcher::running() const { return impl_->running.load(); }
 bool SimProMemoryPatcher::available() const { return impl_->available.load(); }
+bool SimProMemoryPatcher::hook_installed() const {
+    return impl_->hook && impl_->hook->installed();
+}
 std::string SimProMemoryPatcher::last_error() const {
     return impl_->get_error();
 }
