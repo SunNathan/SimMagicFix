@@ -36,6 +36,7 @@ jobs:
         with:
           languages: c-cpp
           queries: security-and-quality
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Configure
         shell: pwsh
