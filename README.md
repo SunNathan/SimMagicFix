@@ -4,7 +4,7 @@
 
 Correctif local pour la télémétrie **Le Mans Ultimate** sur **SimPro Manager 2.1.8** avec volant **Simagic FX Pro**.
 
-Le rendu natif du volant SimPro ne lit ni les fichiers `.dash` ni le RPC JSON : il utilise un buffer `game_data` interne. SimagicFix lit les valeurs **TC**, **TC Cut**, **ABS**, **Motor Map**, **SoC** et **ARB avant/arrière** dans la mémoire partagée de LMU, puis les écrit directement dans ce buffer. Aucun fichier de dashboard n'est modifié.
+SimagicFix lit les valeurs **TC**, **TC Cut**, **ABS**, **Motor Map**, **SoC** et **ARB avant/arrière** dans la mémoire partagée de LMU, puis les écrit directement dans ce buffer.
 
 ## Compatibilité
 
@@ -87,16 +87,12 @@ Les adresses et offsets sont spécifiques à SimPro 2.1.8. Une mise à jour de S
 
 La désinstallation arrête le hook, retire le démarrage automatique et le raccourci du menu Démarrer.
 
-## Icône
-
-L'icône de l'application est une création communautaire : un « S » blanc italique sur un cercle rouge, inspiré des couleurs de Simagic. **Aucun logo officiel Simagic n'est embarqué.** Simagic est une marque de Simagic ; ce projet est non officiel et n'est pas affilié à Simagic.
-
 ## Licence
 
 MIT. Voir `LICENSE`.
 
 Les dépendances et leurs licences sont détaillées dans `THIRD_PARTY_NOTICES.md`.
-
+Simagic est une marque de Simagic ; ce projet est non officiel et n'est pas affilié à Simagic.
 ---
 
 Documentation développeur : [`README.dev.md`](README.dev.md).
