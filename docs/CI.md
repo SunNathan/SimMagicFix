@@ -51,6 +51,8 @@ Après la migration vers le hook SimPro comme mode unique, le code source est an
 | MSVC `/analyze` | 0 | Le shadowing de `bridge.cpp` et l'annotation de `wWinMain` ont disparu avec la réécriture |
 | cppcheck | 0 | Les boucles brutes ont été remplacées par des algorithmes STL, la liste d'initialisation de `SimProHookService` est corrigée |
 
+Deux alertes CodeQL restent ouvertes dans la dépendance vendored **MinHook** (`third_party/minhook/src/buffer.c:229` : `cpp/type-confusion` et `cpp/suspicious-pointer-scaling`). Ce code upstream n'est pas modifié ; il est suivi en amont et n'est pas compilé avec les warnings du projet (`/w`).
+
 `third_party/` n'est pas corrigé : ces dépendances sont suivies en amont. Le bruit éventuel y est neutralisé en amont (suite de requêtes, `/analyze:external-`, `-i third_party`).
 
 ## 5. Passer en mode bloquant
