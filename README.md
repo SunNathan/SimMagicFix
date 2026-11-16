@@ -61,6 +61,10 @@ Sorties :
 - `build/Release/SimagicFix.exe` : application Win32 (installeur + tray).
 - `build/Release/SimagicFixCLI.exe` : diagnostics.
 
+## Intégration continue
+
+Chaque PR est analysée automatiquement (CodeQL, `/analyze` MSVC, cppcheck) et le build Windows est vérifié. Procédure, lecture des résultats et dépannage : [`docs/CI.md`](docs/CI.md).
+
 ## Utilisation
 
 1. Lancer `SimagicFix.exe`.
