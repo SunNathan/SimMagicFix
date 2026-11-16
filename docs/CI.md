@@ -6,7 +6,7 @@ Ce document décrit les workflows d'analyse du dépôt et la façon de lire leur
 
 | Workflow | Fichier | Déclencheurs | Rôle |
 | --- | --- | --- | --- |
-| CodeQL | `.github/workflows/codeql.yml` | PR, push `master`, lundi 04:23, manuel | Analyse sémantique C/C++ (suite `security-and-quality`) |
+| CodeQL | `.github/workflows/codeql.yml` | PR, push `master`, lundi 04:23, manuel | Analyse sémantique C/C++ (suite `security-extended`) |
 | Static analysis | `.github/workflows/static-analysis.yml` | PR, push `master`, manuel | `/analyze` MSVC, cppcheck, rapport de warnings `/W4` |
 | Build and release | `.github/workflows/build-release.yml` | PR, tag `v*`, manuel | Compilation Windows x64 + archive de release |
 | Dependabot | `.github/dependabot.yml` | hebdomadaire | Mises à jour groupées des actions GitHub |
@@ -37,7 +37,7 @@ gh run view <run-id> --log
 
 - `/analyze` est injecté via la variable d'environnement `CL`, pas via `CMAKE_CXX_FLAGS` : les flags par défaut de CMake (`/EHsc`, `/GR`, `/D_WINDOWS`…) restent intacts.
 - `/analyze:external-` exclut `third_party/` de l'analyse ; ces dossiers sont déjà marqués `external` par `CMakeLists.txt`.
-- CodeQL est limité à `src/` par `.github/codeql/codeql-config.yml` : sans ce filtre, les headers vendored (`httplib.h`, `json.hpp`) génèrent plus de 150 remarques de style qui noient les vrais résultats.
+- CodeQL ne lance que des requêtes de sécurité (`security-extended`). La suite `security-and-quality` ajoutait des requêtes de maintenabilité qui signalaient massivement les headers vendored (`cpp/commented-out-code` ×112) ; cette couverture est assurée par `/analyze` et cppcheck. Le filtrage `paths-ignore` de CodeQL n'a pas cet effet pour le C/C++ : les headers inclus dans le build restent extraits.
 - MSVC n'écrit aucun log SARIF exploitable quand on passe par MSBuild (`/analyze:log` et `:autolog:ext:sarif` restent sans effet). Les résultats sont donc extraits du log de compilation et publiés en annotations. Le SARIF reste couvert par CodeQL.
 - Les warnings `/W4` proviennent des options déjà définies dans `CMakeLists.txt` ; le job dédié les compte sans `/analyze`, pour garder une baseline fidèle au build réel.
 
@@ -45,11 +45,11 @@ gh run view <run-id> --log
 
 | Outil | Nombre | Détail |
 | --- | --- | --- |
-| CodeQL | 11 | Aucune sévérité sécurité ; remarques de qualité sur `src/` (`cpp/loop-variable-changed`, `cpp/poorly-documented-function`…) |
+| CodeQL | 0 | `security-extended`, aucune alerte de sécurité |
 | MSVC `/analyze` | 3 | `C4456` + `C6246` (`src/core/bridge.cpp:157`, shadowing de `now`), `C28251` (`src/gui/main_gui.cpp:1222`, `wWinMain` sans annotation) |
 | cppcheck | 8 | 7 × `useStlAlgorithm`, 1 × `shadowVariable` (`src/core/bridge.cpp:157`) |
 
-`third_party/` est exclu des trois outils : ces dépendances sont suivies en amont et ne doivent pas polluer le rapport.
+`third_party/` n'est pas corrigé : ces dépendances sont suivies en amont. Le bruit éventuel y est neutralisé en amont (suite de requêtes, `/analyze:external-`, `-i third_party`).
 
 ## 5. Passer en mode bloquant
 

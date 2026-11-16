@@ -35,8 +35,9 @@ jobs:
         uses: github/codeql-action/init@v4
         with:
           languages: c-cpp
-          queries: security-and-quality
-          config-file: ./.github/codeql/codeql-config.yml
+          # Security focus: quality/maintainability queries are covered by the
+          # /analyze and cppcheck jobs, and would flag vendored headers heavily.
+          queries: security-extended
 
       - name: Configure
         shell: pwsh
