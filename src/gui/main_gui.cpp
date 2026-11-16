@@ -30,6 +30,8 @@ constexpr UINT WM_APP_TRAY = WM_APP + 1;
 constexpr UINT WM_APP_TASK_DONE = WM_APP + 2;
 constexpr UINT WM_APP_SHOW = WM_APP + 3;
 
+UINT g_taskbar_created = 0;
+
 enum ControlId {
     IDC_TITLE = 100,
     IDC_STATUS_SIMPRO,
@@ -95,6 +97,7 @@ struct App {
     bool task_running = false;
     bool task_ok = false;
     std::string task_message;
+    std::chrono::steady_clock::time_point last_tray_retry{};
 
     std::mutex log_mutex;
 };
@@ -195,36 +198,55 @@ void update_tray() {
         tip += L" (démarrage auto désactivé)";
     }
     wcsncpy_s(g_app.nid.szTip, tip.c_str(), _TRUNCATE);
-    Shell_NotifyIconW(NIM_MODIFY, &g_app.nid);
+    if (!Shell_NotifyIconW(NIM_MODIFY, &g_app.nid)) {
+        g_app.tray_added = false;
+        log_line("Échec de la mise à jour de l'icône de notification");
+    }
 }
 
 void add_tray(HWND hwnd) {
     if (g_app.tray_added) {
         return;
     }
-    g_app.nid = {};
-    g_app.nid.cbSize = sizeof(g_app.nid);
-    g_app.nid.hWnd = hwnd;
-    g_app.nid.uID = 1;
-    g_app.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-    g_app.nid.uCallbackMessage = WM_APP_TRAY;
-    g_app.tray_icon = static_cast<HICON>(
-        LoadImageW(g_app.instance, MAKEINTRESOURCEW(IDI_TRAY_ICON), IMAGE_ICON,
-                   16, 16, LR_DEFAULTCOLOR));
-    g_app.tray_icon_owned = g_app.tray_icon != nullptr;
     if (g_app.tray_icon == nullptr) {
-        g_app.tray_icon = LoadIconW(nullptr, IDI_APPLICATION);
+        g_app.tray_icon = static_cast<HICON>(
+            LoadImageW(g_app.instance, MAKEINTRESOURCEW(IDI_TRAY_ICON),
+                       IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR));
+        g_app.tray_icon_owned = g_app.tray_icon != nullptr;
+        if (g_app.tray_icon == nullptr) {
+            g_app.tray_icon = LoadIconW(nullptr, IDI_APPLICATION);
+        }
+    }
+    if (g_app.nid.cbSize == 0 || g_app.nid.hWnd != hwnd) {
+        g_app.nid = {};
+        g_app.nid.cbSize = sizeof(g_app.nid);
+        g_app.nid.hWnd = hwnd;
+        g_app.nid.uID = 1;
+        g_app.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+        g_app.nid.uCallbackMessage = WM_APP_TRAY;
     }
     g_app.nid.hIcon = g_app.tray_icon;
     wcsncpy_s(g_app.nid.szTip, L"SimagicFix", _TRUNCATE);
     g_app.tray_added = Shell_NotifyIconW(NIM_ADD, &g_app.nid) != FALSE;
-    update_tray();
+    if (!g_app.tray_added) {
+        // The icon may already be registered (for example when simulating
+        // TaskbarCreated); remove it and retry once.
+        Shell_NotifyIconW(NIM_DELETE, &g_app.nid);
+        g_app.tray_added = Shell_NotifyIconW(NIM_ADD, &g_app.nid) != FALSE;
+    }
+    if (g_app.tray_added) {
+        log_line("Icône de notification ajoutée");
+        update_tray();
+    } else {
+        log_line("Échec de l'ajout de l'icône de notification");
+    }
 }
 
 void remove_tray() {
     if (g_app.tray_added) {
         Shell_NotifyIconW(NIM_DELETE, &g_app.nid);
         g_app.tray_added = false;
+        log_line("Icône de notification retirée");
     }
     if (g_app.tray_icon_owned && g_app.tray_icon != nullptr) {
         DestroyIcon(g_app.tray_icon);
@@ -283,6 +305,13 @@ void refresh_status() {
         const bool autostart = is_autostart_enabled();
         SendMessageW(g_app.autostart, BM_SETCHECK,
                      autostart ? BST_CHECKED : BST_UNCHECKED, 0);
+    }
+    if (g_app.installed && !g_app.tray_added) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - g_app.last_tray_retry >= std::chrono::seconds(5)) {
+            g_app.last_tray_retry = now;
+            add_tray(g_app.main);
+        }
     }
     update_tray();
 }
@@ -381,13 +410,21 @@ void finish_task() {
                         L"SimagicFix", MB_ICONERROR);
         }
     } else if (g_app.task_kind == TaskKind::Uninstall) {
-        remove_tray();
         if (g_app.task_ok) {
+            remove_tray();
             MessageBoxW(g_app.main, L"SimagicFix a été désinstallé.",
                         L"SimagicFix", MB_ICONINFORMATION);
             g_app.quitting = true;
             DestroyWindow(g_app.main);
         } else {
+            if (g_app.installed && !g_app.tray_added) {
+                add_tray(g_app.main);
+            }
+            log_line(g_app.tray_added
+                         ? "Désinstallation échouée : icône de notification "
+                           "maintenue"
+                         : "Désinstallation échouée : icône de notification "
+                           "indisponible");
             MessageBoxW(
                 g_app.main,
                 w("Désinstallation échouée : " + g_app.task_message).c_str(),
@@ -566,6 +603,14 @@ void show_tray_menu(HWND hwnd) {
 }
 
 LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (g_taskbar_created != 0 && message == g_taskbar_created) {
+        log_line("Explorateur redémarré : réajout de l'icône");
+        remove_tray();
+        if (g_app.installed) {
+            add_tray(hwnd);
+        }
+        return 0;
+    }
     switch (message) {
         case WM_CREATE: {
             g_app.main = hwnd;
@@ -686,6 +731,9 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             }
             return 0;
         case WM_APP_SHOW:
+            if (g_app.installed && !g_app.tray_added) {
+                add_tray(hwnd);
+            }
             show_main();
             return 0;
         case WM_APP_TASK_DONE:
@@ -781,6 +829,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
     InitCommonControlsEx(&controls);
 
     g_app.instance = instance;
+    g_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
 
     const fs::path hook_dll = hook_dll_path();
     std::error_code hook_ec;
