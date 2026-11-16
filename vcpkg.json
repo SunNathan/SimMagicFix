@@ -1,6 +1,6 @@
 {
   "name": "simagicfix",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Le Mans Ultimate telemetry fix for SimPro Manager",
   "dependencies": [
     "minhook",
