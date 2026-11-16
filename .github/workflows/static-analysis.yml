@@ -1,0 +1,261 @@
+name: Static analysis
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: static-analysis-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Microsoft compiler code analysis (/analyze).
+  # Findings are surfaced as workflow annotations and in the job summary.
+  # -------------------------------------------------------------------------
+  msvc-analyze:
+    name: MSVC /analyze (Windows x64)
+    runs-on: windows-2022
+    timeout-minutes: 45
+    # cl.exe inherits CL, so /analyze is added without clobbering the default
+    # CMAKE_CXX_FLAGS (/EHsc, /GR, /D_WINDOWS...).
+    # /analyze:external- keeps the vendored headers (third_party) out of the
+    # report; they are already marked external by CMake.
+    env:
+      CL: /analyze /analyze:external-
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $root = $PWD.Path.Replace('\', '/')
+          cmake -S . -B build-analyze -G "Visual Studio 17 2022" -A x64 `
+            -DSIMAGICFIX_BUILD_GUI=ON `
+            -DLMU_SDK_DIR="$root/third_party/lmu_sdk"
+
+      - name: Build with code analysis
+        shell: pwsh
+        run: |
+          cmake --build build-analyze --config Release 2>&1 |
+            Tee-Object -FilePath build-analyze\build.log
+          exit $LASTEXITCODE
+
+      - name: Report findings
+        if: always()
+        shell: pwsh
+        run: |
+          $log = "build-analyze\build.log"
+          $summary = $env:GITHUB_STEP_SUMMARY
+          "### MSVC code analysis (/analyze)" | Out-File -Append $summary
+          "" | Out-File -Append $summary
+          if (-not (Test-Path $log)) {
+            "No build log: analysis did not run." | Out-File -Append $summary
+            exit 0
+          }
+
+          $pattern = '^\s*(?<file>.+?)\((?<line>\d+)(?:,\d+)?\)\s*:\s*(?:warning|error)\s+(?<code>[A-Z]+\d+)\s*:\s*(?<msg>.+?)(?:\s*\[[^\]]*\])?\s*$'
+          $findings = @(
+            Select-String -Path $log -Pattern $pattern |
+              ForEach-Object { $_.Matches[0] }
+          )
+          "**$($findings.Count) finding(s)** (informational, non-blocking)." |
+            Out-File -Append $summary
+          if ($findings.Count -eq 0) { exit 0 }
+
+          $root = $PWD.Path
+          $annotated = 0
+          foreach ($f in $findings) {
+            if ($annotated -ge 50) { break }
+            $file = [System.IO.Path]::GetRelativePath($root, $f.Groups['file'].Value)
+            # Skip findings outside the repository (system headers, other drives).
+            if ($file.StartsWith('..') -or [System.IO.Path]::IsPathRooted($file)) { continue }
+            # GitHub annotations expect repository-relative POSIX paths.
+            $file = $file.Replace('\', '/')
+            Write-Output ("::warning file={0},line={1}::{2}: {3}" -f `
+              $file, $f.Groups['line'].Value, $f.Groups['code'].Value, $f.Groups['msg'].Value)
+            $annotated++
+          }
+
+          $byCode = $findings |
+            Group-Object { $_.Groups['code'].Value } |
+            Sort-Object Count -Descending
+          "| Code | Count |" | Out-File -Append $summary
+          "| --- | --- |" | Out-File -Append $summary
+          foreach ($group in $byCode) {
+            "| $($group.Name) | $($group.Count) |" | Out-File -Append $summary
+          }
+          "" | Out-File -Append $summary
+          "#### First 30 findings" | Out-File -Append $summary
+          '```' | Out-File -Append $summary
+          $findings |
+            Select-Object -First 30 |
+            ForEach-Object { $_.Value.Trim() } |
+            Out-File -Append $summary
+          '```' | Out-File -Append $summary
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: msvc-analyze
+          path: build-analyze/build.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  # -------------------------------------------------------------------------
+  # Portable checks with cppcheck. Informational only (no --error-exitcode).
+  # -------------------------------------------------------------------------
+  cppcheck:
+    name: cppcheck (portable)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        run: |
+          cppcheck --version
+          cppcheck \
+            --std=c++20 \
+            --enable=warning,performance,portability,style \
+            --inline-suppr \
+            --suppress=missingIncludeSystem \
+            --suppress=unmatchedSuppression \
+            --template='{file}:{line}: {severity}: {id}: {message}' \
+            --output-file=cppcheck-report.txt \
+            -i third_party -i build -i build-analyze -i build-codeql \
+            src || true
+
+      - name: Summarize findings
+        run: |
+          {
+            echo "### cppcheck"
+            echo
+            if [ ! -s cppcheck-report.txt ]; then
+              echo "No cppcheck finding."
+            else
+              echo "**$(grep -c . cppcheck-report.txt) finding(s)** (informational, non-blocking)."
+              echo
+              echo "| Severity | Count |"
+              echo "| --- | --- |"
+              for sev in error warning performance portability style information; do
+                n=$(grep -c ": ${sev}:" cppcheck-report.txt || true)
+                if [ "${n:-0}" -gt 0 ]; then
+                  echo "| ${sev} | ${n} |"
+                fi
+              done
+              echo
+              echo "#### First 20 findings"
+              echo '```'
+              head -20 cppcheck-report.txt
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Surface up to 50 findings as PR annotations.
+          if [ -s cppcheck-report.txt ]; then
+            head -50 cppcheck-report.txt | while IFS= read -r line; do
+              file=${line%%:*}
+              rest=${line#*:}
+              lineno=${rest%%:*}
+              detail=${rest#*: }
+              case "$file" in
+                src/*) echo "::warning file=${file},line=${lineno}::${detail}" ;;
+              esac
+            done
+          fi
+          cat cppcheck-report.txt || true
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cppcheck-report
+          path: cppcheck-report.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  # -------------------------------------------------------------------------
+  # Plain /W4 build: counts compiler warnings in the job summary.
+  # -------------------------------------------------------------------------
+  warnings-report:
+    name: MSVC warnings report
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $root = $PWD.Path.Replace('\', '/')
+          cmake -S . -B build-warnings -G "Visual Studio 17 2022" -A x64 `
+            -DSIMAGICFIX_BUILD_GUI=ON `
+            -DLMU_SDK_DIR="$root/third_party/lmu_sdk"
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build-warnings --config Release 2>&1 |
+            Tee-Object -FilePath build-warnings\build.log
+
+      - name: Summarize warnings
+        if: always()
+        shell: pwsh
+        run: |
+          $log = "build-warnings\build.log"
+          if (-not (Test-Path $log)) {
+            "Build log not found, no warning report." | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
+          $warnings = @(
+            Select-String -Path $log -Pattern 'warning [A-Z]+\d{4}' |
+              ForEach-Object { $_.Line.Trim() }
+          )
+          "### MSVC /W4 warnings" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "**$($warnings.Count) warning line(s)** (informational, non-blocking)." |
+            Out-File -Append $env:GITHUB_STEP_SUMMARY
+          if ($warnings.Count -gt 0) {
+            $byCode = $warnings |
+              ForEach-Object { if ($_ -match 'warning ([A-Z]+\d{4})') { $Matches[1] } } |
+              Group-Object |
+              Sort-Object Count -Descending
+            "| Code | Count |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            "| --- | --- |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            foreach ($group in $byCode) {
+              "| $($group.Name) | $($group.Count) |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            }
+            "" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            "#### First 20 warnings" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            $warnings | Select-Object -First 20 | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            '```' | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: msvc-build-log
+          path: build-warnings/build.log
+          if-no-files-found: warn
+          retention-days: 14
