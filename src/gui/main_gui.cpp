@@ -46,7 +46,7 @@ enum ControlId {
     IDC_MEMORY_PATCH,
 };
 
-enum class TaskKind { None, Install };
+enum class TaskKind { None, Install, Uninstall };
 
 enum MenuId {
     IDM_OPEN = 200,
@@ -80,6 +80,7 @@ struct App {
     bool installed = false;
     bool tray_only = false;
     bool quitting = false;
+    bool keep_source = false;
 
     std::unique_ptr<TelemetryService> telemetry;
     std::unique_ptr<SimProHookService> hook_service;
@@ -125,17 +126,26 @@ void set_font(HWND control, HFONT font) {
 }
 
 void stop_services() {
+    const auto start = std::chrono::steady_clock::now();
+    const bool had_services =
+        g_app.hook_service != nullptr || g_app.telemetry != nullptr;
     if (g_app.hook_service) {
         g_app.hook_service->stop();
         g_app.hook_service.reset();
-        log_line("Hook service stopped");
+        log_line("Service du hook arrêté");
     }
     if (g_app.telemetry) {
         g_app.telemetry->stop();
         g_app.telemetry.reset();
-        log_line("Telemetry stopped");
+        log_line("Télémétrie arrêtée");
     }
     g_app.last_hook_error.clear();
+    if (had_services) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - start)
+                                 .count();
+        log_line("Services arrêtés en " + std::to_string(elapsed) + " ms");
+    }
 }
 
 void start_services() {
@@ -148,7 +158,8 @@ void start_services() {
         options.poll_ms = 5;
         g_app.telemetry = std::make_unique<TelemetryService>(options);
         if (!g_app.telemetry->start()) {
-            log_line("Telemetry start failed: " + g_app.telemetry->last_error());
+            log_line("Échec du démarrage de la télémétrie : " +
+                     g_app.telemetry->last_error());
         }
     }
     g_app.last_hook_error.clear();
@@ -157,7 +168,7 @@ void start_services() {
             return g_app.telemetry ? g_app.telemetry->snapshot() : LmuSnapshot{};
         });
     g_app.hook_service->start();
-    log_line("Hook service started");
+    log_line("Service du hook démarré");
 }
 
 void apply_patch_state() {
@@ -178,10 +189,10 @@ void update_tray() {
     } else if (g_app.hook_service) {
         tip += L"hook en attente";
     } else {
-        tip += L"patch desactive";
+        tip += L"patch désactivé";
     }
     if (!is_autostart_enabled()) {
-        tip += L" (demarrage auto desactive)";
+        tip += L" (démarrage auto désactivé)";
     }
     wcsncpy_s(g_app.nid.szTip, tip.c_str(), _TRUNCATE);
     Shell_NotifyIconW(NIM_MODIFY, &g_app.nid);
@@ -223,21 +234,21 @@ void remove_tray() {
 }
 
 void refresh_status() {
-    if (g_app.main == nullptr) {
+    if (g_app.main == nullptr || g_app.task_running) {
         return;
     }
     const fs::path simpro = simpro_exe_path();
     const fs::path lmu = lmu_install_path();
     set_text(g_app.status_simpro,
-             simpro.empty() ? "SimPro Manager : non detecte"
-                            : "SimPro Manager : detecte");
+             simpro.empty() ? "SimPro Manager : non détecté"
+                            : "SimPro Manager : détecté");
     set_text(g_app.status_lmu,
-             lmu.empty() ? "Le Mans Ultimate : non detecte"
-                         : "Le Mans Ultimate : detecte");
+             lmu.empty() ? "Le Mans Ultimate : non détecté"
+                         : "Le Mans Ultimate : détecté");
 
     std::string hook_text = "Hook SimPro : ";
     if (!g_app.hook_service) {
-        hook_text += "desactive";
+        hook_text += "désactivé";
     } else if (g_app.hook_service->installed()) {
         hook_text += "actif";
     } else {
@@ -247,13 +258,13 @@ void refresh_status() {
             hook_text += " (" + error + ")";
             if (error != g_app.last_hook_error) {
                 g_app.last_hook_error = error;
-                log_line("Hook: " + error);
+                log_line("Hook : " + error);
             }
         }
     }
     set_text(g_app.status_hook, hook_text);
 
-    std::string telemetry_text = "Telemetrie LMU : ";
+    std::string telemetry_text = "Télémétrie LMU : ";
     if (!g_app.telemetry) {
         telemetry_text += "inactive";
     } else if (g_app.telemetry->lmu_available()) {
@@ -300,7 +311,7 @@ void open_logs() {
         ShellExecuteW(nullptr, L"open", logs_dir().c_str(), nullptr, nullptr,
                       SW_SHOWNORMAL);
     if (reinterpret_cast<INT_PTR>(result) <= 32) {
-        MessageBoxW(g_app.main, L"Impossible d'ouvrir le dossier des logs.",
+        MessageBoxW(g_app.main, L"Impossible d'ouvrir le dossier des journaux.",
                     L"SimagicFix", MB_ICONERROR);
     }
 }
@@ -321,6 +332,7 @@ void run_task(TaskKind kind, std::function<void()> task) {
     g_app.task_kind = kind;
     g_app.task_ok = false;
     g_app.task_message.clear();
+    KillTimer(g_app.main, 1);
     EnableWindow(g_app.install, FALSE);
     EnableWindow(g_app.uninstall_button, FALSE);
     EnableWindow(g_app.quit_button, FALSE);
@@ -361,16 +373,32 @@ void finish_task() {
             add_tray(g_app.main);
             update_tray();
             MessageBoxW(g_app.main,
-                        L"SimagicFix installe.\nLe hook SimPro est actif.",
+                        L"SimagicFix installé.\nLe hook SimPro est actif.",
                         L"SimagicFix", MB_ICONINFORMATION);
         } else {
             MessageBoxW(g_app.main,
-                        w("Installation echouee : " + g_app.task_message).c_str(),
+                        w("Installation échouée : " + g_app.task_message).c_str(),
                         L"SimagicFix", MB_ICONERROR);
+        }
+    } else if (g_app.task_kind == TaskKind::Uninstall) {
+        remove_tray();
+        if (g_app.task_ok) {
+            MessageBoxW(g_app.main, L"SimagicFix a été désinstallé.",
+                        L"SimagicFix", MB_ICONINFORMATION);
+            g_app.quitting = true;
+            DestroyWindow(g_app.main);
+        } else {
+            MessageBoxW(
+                g_app.main,
+                w("Désinstallation échouée : " + g_app.task_message).c_str(),
+                L"SimagicFix", MB_ICONERROR);
         }
     }
 
     g_app.task_kind = TaskKind::None;
+    if (!g_app.quitting && g_app.main != nullptr) {
+        SetTimer(g_app.main, 1, 1000, nullptr);
+    }
 }
 
 void start_install() {
@@ -380,13 +408,39 @@ void start_install() {
     InstallOptions options;
     options.auto_start =
         SendMessageW(g_app.autostart, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    options.keep_source = g_app.keep_source;
 
-    log_line("Install requested");
+    std::error_code ec;
+    const bool running_installed =
+        fs::equivalent(current_exe_path(), installed_exe_path(), ec);
+    if (!running_installed && !options.keep_source) {
+        const int answer = MessageBoxW(
+            g_app.main,
+            L"Installation de SimagicFix\n\n"
+            L"SimagicFix va être installé dans :\n"
+            L"%LOCALAPPDATA%\\SimagicFix\n\n"
+            L"Les fichiers SimagicFix.exe et SimagicFixHook.dll présents dans "
+            L"le dossier actuel seront supprimés après l'installation. "
+            L"L'exe sera supprimé à la fermeture de l'application.\n\n"
+            L"L'application continuera de fonctionner depuis son emplacement "
+            L"installé et le raccourci du menu Démarrer.\n\n"
+            L"Continuer ?",
+            L"SimagicFix - installation", MB_OKCANCEL | MB_ICONINFORMATION);
+        if (answer != IDOK) {
+            return;
+        }
+    }
+
+    log_line("Installation demandée");
     run_task(TaskKind::Install, [options]() {
         const InstallReport report = install(options);
         g_app.task_ok = report.ok;
         g_app.task_message = report.ok ? "" : report.error;
-        log_line(report.ok ? "Install OK" : "Install failed: " + report.error);
+        log_line(report.ok ? "Installation réussie"
+                           : "Échec de l'installation : " + report.error);
+        if (!report.warning.empty()) {
+            log_line("Avertissement d'installation : " + report.warning);
+        }
     });
 }
 
@@ -396,30 +450,60 @@ void do_uninstall() {
     }
     const int answer = MessageBoxW(
         g_app.main,
-        L"Desinstaller SimagicFix ?\n\n"
-        L"- le hook SimPro sera arrete\n"
-        L"- le demarrage automatique sera retire\n"
-        L"- le raccourci du menu Demarrer sera supprime",
+        L"Désinstaller SimagicFix ?\n\n"
+        L"- le hook SimPro sera arrêté\n"
+        L"- le démarrage automatique sera retiré\n"
+        L"- le raccourci du menu Démarrer sera supprimé",
         L"SimagicFix", MB_YESNO | MB_ICONWARNING);
     if (answer != IDYES) {
         return;
     }
-    stop_services();
-    const bool ok = uninstall();
-    remove_tray();
-    log_line(ok ? "Uninstall completed" : "Uninstall completed with errors");
-    std::error_code ec;
-    const bool running_installed =
-        fs::equivalent(current_exe_path(), installed_exe_path(), ec);
-    if (running_installed) {
-        schedule_delete_self();
+
+    bool close_simpro = false;
+    if (process_running(L"simpro.exe")) {
+        const int simpro = MessageBoxW(
+            g_app.main,
+            L"SimPro Manager est encore lancé.\n\n"
+            L"SimagicFix doit fermer SimPro Manager avant de continuer.\n\n"
+            L"OK : fermer SimPro et continuer\n"
+            L"Annuler : annuler la désinstallation",
+            L"SimagicFix", MB_OKCANCEL | MB_ICONWARNING);
+        if (simpro != IDOK) {
+            return;
+        }
+        close_simpro = true;
     }
-    MessageBoxW(g_app.main,
-                L"SimagicFix a ete desinstalle.",
-                L"SimagicFix",
-                ok ? MB_ICONINFORMATION : MB_ICONWARNING);
-    g_app.quitting = true;
-    DestroyWindow(g_app.main);
+
+    log_line("Désinstallation demandée");
+    run_task(TaskKind::Uninstall, [close_simpro]() {
+        if (close_simpro) {
+            log_line("Désinstallation : fermeture de SimPro");
+            if (!close_process(L"simpro.exe", 15000)) {
+                g_app.task_ok = false;
+                g_app.task_message =
+                    "Impossible de fermer SimPro Manager. Fermez-le "
+                    "manuellement puis réessayez.";
+                log_line("Désinstallation : impossible de fermer SimPro");
+                return;
+            }
+            log_line("Désinstallation : SimPro fermé");
+        }
+        log_line("Désinstallation : arrêt des services");
+        stop_services();
+        log_line("Désinstallation : services arrêtés");
+        const bool ok = uninstall();
+        g_app.task_ok = ok;
+        g_app.task_message =
+            ok ? "" : "La désinstallation a rencontré une erreur.";
+        log_line(ok ? "Désinstallation terminée"
+                    : "Désinstallation terminée avec des erreurs");
+        std::error_code ec;
+        const bool running_installed =
+            fs::equivalent(current_exe_path(), installed_exe_path(), ec);
+        if (running_installed) {
+            schedule_delete_self();
+        }
+    });
 }
 
 void toggle_autostart() {
@@ -462,10 +546,10 @@ void show_tray_menu(HWND hwnd) {
     AppendMenuW(menu, MF_STRING, IDM_OPEN, L"Ouvrir SimagicFix");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (is_autostart_enabled() ? MF_CHECKED : 0),
-                IDM_AUTOSTART, L"Demarrage automatique");
-    AppendMenuW(menu, MF_STRING, IDM_LOGS, L"Ouvrir les logs");
+                IDM_AUTOSTART, L"Démarrage automatique");
+    AppendMenuW(menu, MF_STRING, IDM_LOGS, L"Ouvrir les journaux");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, IDM_UNINSTALL, L"Desinstaller");
+    AppendMenuW(menu, MF_STRING, IDM_UNINSTALL, L"Désinstaller");
     AppendMenuW(menu, MF_STRING, IDM_QUIT, L"Quitter");
 
     POINT point{};
@@ -494,7 +578,7 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                                      CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                      DEFAULT_PITCH, L"Segoe UI");
 
-            HWND title = CreateWindowExW(0, L"STATIC", L"SimagicFix - telemetrie LMU",
+            HWND title = CreateWindowExW(0, L"STATIC", L"SimagicFix - télémétrie LMU",
                                          WS_CHILD | WS_VISIBLE, 20, 14, 600, 30, hwnd,
                                          reinterpret_cast<HMENU>(IDC_TITLE),
                                          g_app.instance, nullptr);
@@ -508,7 +592,7 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                 {IDC_STATUS_SIMPRO, L"SimPro Manager : ...", 56},
                 {IDC_STATUS_LMU, L"Le Mans Ultimate : ...", 82},
                 {IDC_STATUS_HOOK, L"Hook SimPro : ...", 108},
-                {IDC_STATUS_TELEMETRY, L"Telemetrie LMU : ...", 134},
+                {IDC_STATUS_TELEMETRY, L"Télémétrie LMU : ...", 134},
             };
             for (const auto& status : statuses) {
                 HWND control = CreateWindowExW(
@@ -529,7 +613,7 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             }
 
             g_app.memory_patch_checkbox = CreateWindowExW(
-                0, L"BUTTON", L"Activer le patch memoire SimPro (hook)",
+                0, L"BUTTON", L"Activer le patch mémoire SimPro (hook)",
                 WS_CHILD | BS_AUTOCHECKBOX, 20, 170, 600, 26, hwnd,
                 reinterpret_cast<HMENU>(IDC_MEMORY_PATCH), g_app.instance,
                 nullptr);
@@ -537,7 +621,7 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
 
             g_app.autostart = CreateWindowExW(
                 0, L"BUTTON",
-                L"Lancer SimagicFix au demarrage de Windows",
+                L"Lancer SimagicFix au démarrage de Windows",
                 WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 202, 600, 26, hwnd,
                 reinterpret_cast<HMENU>(IDC_AUTOSTART), g_app.instance, nullptr);
             set_font(g_app.autostart, g_app.font);
@@ -558,11 +642,11 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             set_font(g_app.cancel, g_app.font);
 
             g_app.logs_button = CreateWindowExW(
-                0, L"BUTTON", L"Ouvrir les logs", WS_CHILD | BS_PUSHBUTTON, 20, 272,
+                0, L"BUTTON", L"Ouvrir les journaux", WS_CHILD | BS_PUSHBUTTON, 20, 272,
                 150, 34, hwnd, reinterpret_cast<HMENU>(IDC_LOGS), g_app.instance,
                 nullptr);
             g_app.uninstall_button = CreateWindowExW(
-                0, L"BUTTON", L"Desinstaller", WS_CHILD | BS_PUSHBUTTON, 180, 272,
+                0, L"BUTTON", L"Désinstaller", WS_CHILD | BS_PUSHBUTTON, 180, 272,
                 140, 34, hwnd, reinterpret_cast<HMENU>(IDC_UNINSTALL),
                 g_app.instance, nullptr);
             g_app.quit_button = CreateWindowExW(
@@ -653,23 +737,23 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
         }
         case WM_CLOSE:
             if (g_app.task_running) {
-                MessageBoxW(hwnd, L"Une operation est en cours. Patiente quelques instants.",
+                MessageBoxW(hwnd, L"Une opération est en cours. Patientez quelques instants.",
                             L"SimagicFix", MB_ICONINFORMATION);
                 return 0;
             }
-            if (g_app.installed && !g_app.quitting) {
-                ShowWindow(hwnd, SW_HIDE);
-                return 0;
-            }
+            g_app.quitting = true;
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
             KillTimer(hwnd, 1);
+            log_line("Arrêt : suppression de l'icône de notification");
+            remove_tray();
             if (g_app.task_thread.joinable()) {
                 g_app.task_thread.join();
             }
+            log_line("Arrêt : interruption des services");
             stop_services();
-            remove_tray();
+            log_line("Arrêt : services arrêtés");
             if (g_app.small_icon != nullptr) {
                 DestroyIcon(g_app.small_icon);
                 g_app.small_icon = nullptr;
@@ -701,7 +785,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
     const fs::path hook_dll = hook_dll_path();
     std::error_code hook_ec;
     if (!fs::is_regular_file(hook_dll, hook_ec)) {
-        log_line("SimagicFixHook.dll not found: " + path_to_utf8(hook_dll));
+        log_line("SimagicFixHook.dll introuvable : " + path_to_utf8(hook_dll));
         const std::wstring message =
             L"SimagicFixHook.dll est introuvable.\n\n"
             L"Chemin attendu :\n" +
@@ -714,17 +798,30 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
 
     const wchar_t* command_line = GetCommandLineW();
     g_app.tray_only = wcsstr(command_line, L"--tray") != nullptr;
+    g_app.keep_source = wcsstr(command_line, L"--keep-source") != nullptr;
 
     // Single instance first: a second launch must not disturb the running app.
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\SimagicFixSingleton");
     if (mutex != nullptr && GetLastError() == ERROR_ALREADY_EXISTS) {
+        bool activated = false;
         for (int attempt = 0; attempt < 20; ++attempt) {
             HWND existing = FindWindowW(kMainClass, nullptr);
             if (existing != nullptr) {
-                PostMessageW(existing, WM_APP_SHOW, 0, 0);
+                DWORD_PTR result = 0;
+                const LRESULT sent = SendMessageTimeoutW(
+                    existing, WM_APP_SHOW, 0, 0,
+                    SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &result);
+                activated = sent != 0;
                 break;
             }
             Sleep(100);
+        }
+        if (!activated) {
+            MessageBoxW(nullptr,
+                        L"SimagicFix est déjà lancé mais ne répond pas.\n\n"
+                        L"Fermez-le via le gestionnaire des tâches, puis "
+                        L"relancez SimagicFix.",
+                        L"SimagicFix", MB_ICONWARNING);
         }
         CloseHandle(mutex);
         return 0;

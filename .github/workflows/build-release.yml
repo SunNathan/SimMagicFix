@@ -62,7 +62,7 @@ jobs:
           $out = & .\build\Release\SimagicFixCLI.exe probe
           $out | Write-Host
           if ($LASTEXITCODE -ne 0) { throw "probe failed" }
-          if (-not ($out -match "Mock Hypercar")) { throw "mock LMU_Data was not read" }
+          if (-not ($out -match "Voiture test")) { throw "La télémétrie simulée n'a pas été lue" }
           $mock.WaitForExit()
 
       - name: Package

@@ -83,7 +83,7 @@ Test sans LMU ni SimPro :
 SimagicFixCLI.exe patch-memory 10 --mock
 ```
 
-La sortie doit afficher `lmu=Mock Hypercar` et des valeurs qui évoluent.
+La sortie doit afficher `lmu=Voiture test` et des valeurs qui évoluent.
 
 ## 6. Vérifier le volant
 

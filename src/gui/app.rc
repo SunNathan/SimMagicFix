@@ -1,6 +1,8 @@
 #include <windows.h>
 #include "resource.h"
 
+#pragma code_page(65001)
+
 IDI_APP_ICON  ICON "app.ico"
 IDI_TRAY_ICON ICON "tray.ico"
 
@@ -15,21 +17,21 @@ FILESUBTYPE     0x0L
 BEGIN
     BLOCK "StringFileInfo"
     BEGIN
-        BLOCK "040904b0"
+        BLOCK "040C04b0"
         BEGIN
-            VALUE "CompanyName",      "SimagicFix (community)"
-            VALUE "FileDescription",  "SimagicFix - LMU telemetry hook for SimPro"
+            VALUE "CompanyName",      "SimagicFix (communauté)"
+            VALUE "FileDescription",  "SimagicFix - correctif de télémétrie LMU pour SimPro"
             VALUE "FileVersion",      "0.4.1.0"
             VALUE "InternalName",     "SimagicFix"
-            VALUE "LegalCopyright",   "Unofficial community tool - not affiliated with Simagic"
+            VALUE "LegalCopyright",   "Outil communautaire non officiel - non affilié à Simagic"
             VALUE "OriginalFilename", "SimagicFix.exe"
             VALUE "ProductName",      "SimagicFix"
             VALUE "ProductVersion",   "0.4.1.0"
-            VALUE "Comments",         "Original community icon inspired by Simagic colours"
+            VALUE "Comments",         "Icône communautaire originale inspirée des couleurs Simagic"
         END
     END
     BLOCK "VarFileInfo"
     BEGIN
-        VALUE "Translation", 0x409, 1200
+        VALUE "Translation", 0x40C, 1200
     END
 END

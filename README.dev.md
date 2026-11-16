@@ -130,7 +130,9 @@ SimagicFixCLI.exe patch-memory 30 --mock
 - `patch-memory` : lance la télémétrie et le hook pendant N secondes, puis affiche l'état (`installed`, `error`, valeurs).
 - `patch-memory --mock` : mêmes tests sans LMU ni SimPro.
 
-Autres commandes : `install [--no-autostart]`, `autostart --enable|--disable|--status`.
+Autres commandes : `install [--no-autostart] [--keep-source]`, `autostart --enable|--disable|--status`.
+
+`--keep-source` conserve `SimagicFix.exe` et `SimagicFixHook.dll` dans le dossier de lancement. Sans cette option, l'installateur les supprime après l'installation (l'exe à la fermeture de l'application). L'interface graphique propose la même suppression via une modal de confirmation.
 
 Procédure de validation complète : [`docs/VALIDATION.md`](docs/VALIDATION.md).
 
@@ -185,6 +187,8 @@ L'archive de release contient exactement :
 - `README.md`
 
 `README.md` embarque les notices de licences tierces (MinHook, nlohmann/json) afin que l'archive binaire reste conforme sans fichier supplémentaire. Le fichier `THIRD_PARTY_NOTICES.md` reste dans le dépôt pour la documentation développeur.
+
+L'installateur supprime les fichiers source après installation. Pour un build local, utiliser `SimagicFix.exe --keep-source` ou `SimagicFixCLI.exe install --keep-source` afin de conserver `build/Release/SimagicFix.exe` et `SimagicFixHook.dll`.
 
 ## 9. Licence et dépendances
 

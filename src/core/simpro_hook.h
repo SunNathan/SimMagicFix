@@ -15,7 +15,8 @@ public:
     SimProHook(const SimProHook&) = delete;
     SimProHook& operator=(const SimProHook&) = delete;
 
-    bool start(DWORD pid, const fs::path& dll_path);
+    bool start(DWORD pid, const fs::path& dll_path,
+               const std::atomic<bool>* cancel = nullptr);
     void update(const LmuSnapshot& snapshot);
     void set_active(bool active);
     void stop();
