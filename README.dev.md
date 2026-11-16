@@ -177,6 +177,15 @@ Le code source est analysé avec zéro finding cppcheck et zéro warning MSVC `/
 4. Tester `patch-memory 30 --mock` puis avec SimPro et LMU.
 5. Créer le tag `v<version>` : le workflow `build-release.yml` produit l'archive.
 
+L'archive de release contient exactement :
+
+- `SimagicFix.exe`
+- `SimagicFixHook.dll`
+- `LICENSE`
+- `README.md`
+
+`README.md` embarque les notices de licences tierces (MinHook, nlohmann/json) afin que l'archive binaire reste conforme sans fichier supplémentaire. Le fichier `THIRD_PARTY_NOTICES.md` reste dans le dépôt pour la documentation développeur.
+
 ## 9. Licence et dépendances
 
 MIT (voir `LICENSE`). Dépendances gérées par vcpkg : MinHook (BSD 2-Clause), `nlohmann/json` (MIT). Les types LMU sont définis dans `src/core/lmu_types.h` ; le header officiel du jeu n'est ni requis ni redistribué. Détails dans `THIRD_PARTY_NOTICES.md`.
