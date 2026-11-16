@@ -41,6 +41,22 @@ struct TelemetryService::Impl {
         snapshot = value;
     }
 
+    bool wait_for(std::chrono::milliseconds total) {
+        const auto deadline = std::chrono::steady_clock::now() + total;
+        while (running.load()) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) {
+                return true;
+            }
+            const auto remaining =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - now);
+            std::this_thread::sleep_for(
+                std::min(remaining, std::chrono::milliseconds(50)));
+        }
+        return false;
+    }
+
     LmuSnapshot make_mock_snapshot() const {
         LmuSnapshot s;
         s.valid = true;
@@ -88,7 +104,9 @@ struct TelemetryService::Impl {
             if (options.mock) {
                 store_snapshot(make_mock_snapshot());
                 lmu_available.store(true);
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                if (!wait_for(std::chrono::milliseconds(5))) {
+                    break;
+                }
                 continue;
             }
 
@@ -101,7 +119,9 @@ struct TelemetryService::Impl {
                     }
                     lmu_available.store(false);
                     store_snapshot(LmuSnapshot{});
-                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                    if (!wait_for(std::chrono::milliseconds(200))) {
+                        break;
+                    }
                     continue;
                 }
             }
@@ -117,7 +137,9 @@ struct TelemetryService::Impl {
                 }
                 if (!reader->is_open()) {
                     lmu_available.store(false);
-                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                    if (!wait_for(std::chrono::milliseconds(200))) {
+                        break;
+                    }
                     continue;
                 }
             }
@@ -126,11 +148,15 @@ struct TelemetryService::Impl {
             if (reader->read(value)) {
                 store_snapshot(value);
                 lmu_available.store(true);
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                if (!wait_for(std::chrono::milliseconds(1))) {
+                    break;
+                }
             } else {
                 lmu_available.store(false);
-                std::this_thread::sleep_for(std::chrono::milliseconds(
-                    options.poll_ms > 0 ? options.poll_ms : 20));
+                if (!wait_for(std::chrono::milliseconds(
+                        options.poll_ms > 0 ? options.poll_ms : 20))) {
+                    break;
+                }
             }
         }
         if (reader) {

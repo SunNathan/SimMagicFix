@@ -30,9 +30,13 @@ DWORD find_simpro_pid() {
     return pid;
 }
 
-bool inject_library(DWORD pid, const fs::path& dll_path) {
+bool inject_library(DWORD pid, const fs::path& dll_path,
+                    const std::atomic<bool>* cancel) {
     std::error_code ec;
     if (!fs::is_regular_file(dll_path, ec)) {
+        return false;
+    }
+    if (cancel != nullptr && !cancel->load()) {
         return false;
     }
 
@@ -61,10 +65,20 @@ bool inject_library(DWORD pid, const fs::path& dll_path) {
                     HANDLE thread = CreateRemoteThread(
                         process, nullptr, 0, load_library, remote, 0, nullptr);
                     if (thread != nullptr) {
-                        WaitForSingleObject(thread, 5000);
-                        DWORD exit_code = 0;
-                        GetExitCodeThread(thread, &exit_code);
-                        injected = exit_code != 0;
+                        const ULONGLONG deadline = GetTickCount64() + 5000;
+                        while (GetTickCount64() < deadline) {
+                            if (cancel != nullptr && !cancel->load()) {
+                                break;
+                            }
+                            const DWORD wait =
+                                WaitForSingleObject(thread, 100);
+                            if (wait == WAIT_OBJECT_0) {
+                                DWORD exit_code = 0;
+                                GetExitCodeThread(thread, &exit_code);
+                                injected = exit_code != 0;
+                                break;
+                            }
+                        }
                         CloseHandle(thread);
                     }
                 }
@@ -125,7 +139,11 @@ struct SimProHook::Impl {
         }
     }
 
-    bool start(DWORD pid, const fs::path& dll_path) {
+    bool start(DWORD pid, const fs::path& dll_path,
+               const std::atomic<bool>* cancel) {
+        if (cancel != nullptr && !cancel->load()) {
+            return false;
+        }
         if (!ensure_mapping()) {
             return false;
         }
@@ -140,14 +158,23 @@ struct SimProHook::Impl {
             set_error(HookError::DllNotFound);
             return false;
         }
+        if (cancel != nullptr && !cancel->load()) {
+            return false;
+        }
 
-        if (!inject_library(pid, dll_path)) {
+        if (!inject_library(pid, dll_path, cancel)) {
+            if (cancel != nullptr && !cancel->load()) {
+                return false;
+            }
             set_error(HookError::InjectionFailed);
             return false;
         }
 
         InterlockedExchange(&view->active, 1);
         for (int attempt = 0; attempt < 60; ++attempt) {
+            if (cancel != nullptr && !cancel->load()) {
+                return false;
+            }
             if (view->hook_installed != 0) {
                 return true;
             }
@@ -218,8 +245,9 @@ struct SimProHook::Impl {
 SimProHook::SimProHook() : impl_(std::make_unique<Impl>()) {}
 SimProHook::~SimProHook() = default;
 
-bool SimProHook::start(DWORD pid, const fs::path& dll_path) {
-    return impl_->start(pid, dll_path);
+bool SimProHook::start(DWORD pid, const fs::path& dll_path,
+                       const std::atomic<bool>* cancel) {
+    return impl_->start(pid, dll_path, cancel);
 }
 
 void SimProHook::update(const LmuSnapshot& snapshot) {
@@ -314,6 +342,22 @@ struct SimProHookService::Impl {
 
     bool installed() const { return hook.installed(); }
 
+    bool wait_for(std::chrono::milliseconds total) {
+        const auto deadline = std::chrono::steady_clock::now() + total;
+        while (running.load()) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) {
+                return true;
+            }
+            const auto remaining =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - now);
+            std::this_thread::sleep_for(
+                std::min(remaining, std::chrono::milliseconds(50)));
+        }
+        return false;
+    }
+
     void loop() {
         while (running.load()) {
             const DWORD pid = find_simpro_pid();
@@ -325,7 +369,9 @@ struct SimProHookService::Impl {
                     unsupported_binary = false;
                 }
                 set_error("SimPro not running");
-                std::this_thread::sleep_for(std::chrono::seconds(2));
+                if (!wait_for(std::chrono::seconds(2))) {
+                    break;
+                }
                 continue;
             }
 
@@ -340,9 +386,12 @@ struct SimProHookService::Impl {
             if (!hook.installed() && !unsupported_binary) {
                 const auto now = std::chrono::steady_clock::now();
                 if (now >= next_retry) {
-                    if (hook.start(pid, dll_path)) {
+                    if (hook.start(pid, dll_path, &running)) {
                         set_error("");
                     } else {
+                        if (!running.load()) {
+                            break;
+                        }
                         set_error(hook.last_error_text());
                         if (hook.last_error() == HookError::VersionMismatch) {
                             unsupported_binary = true;
@@ -360,7 +409,9 @@ struct SimProHookService::Impl {
                     hook.update(snapshot);
                 }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            if (!wait_for(std::chrono::milliseconds(5))) {
+                break;
+            }
         }
     }
 };
