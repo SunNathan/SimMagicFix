@@ -24,6 +24,7 @@ bool start_process(const fs::path& exe);
 
 fs::path current_exe_path();
 fs::path installed_exe_path();
+fs::path hook_dll_path();
 fs::path start_menu_shortcut_path();
 
 std::string now_string();

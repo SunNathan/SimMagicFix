@@ -135,6 +135,12 @@ struct SimProHook::Impl {
                             static_cast<LONG>(HookError::None));
         SetEvent(ready_event);
 
+        std::error_code ec;
+        if (!fs::is_regular_file(dll_path, ec)) {
+            set_error(HookError::DllNotFound);
+            return false;
+        }
+
         if (!inject_library(pid, dll_path)) {
             set_error(HookError::InjectionFailed);
             return false;
@@ -248,6 +254,8 @@ std::string SimProHook::last_error_text() const {
             return "Cannot inject SimagicFixHook.dll into SimPro";
         case HookError::Timeout:
             return "Timed out waiting for the SimPro hook";
+        case HookError::DllNotFound:
+            return "SimagicFixHook.dll not found";
     }
     return "Unknown hook error";
 }
@@ -265,8 +273,7 @@ struct SimProHookService::Impl {
     std::string error;
 
     explicit Impl(SnapshotProvider value)
-        : provider(std::move(value)),
-          dll_path(current_exe_path().parent_path() / L"SimagicFixHook.dll") {}
+        : provider(std::move(value)), dll_path(hook_dll_path()) {}
     ~Impl() { stop(); }
 
     void set_error(const std::string& value) {
@@ -282,6 +289,11 @@ struct SimProHookService::Impl {
     bool start() {
         if (running.load()) {
             return true;
+        }
+        std::error_code ec;
+        if (!fs::is_regular_file(dll_path, ec)) {
+            set_error("SimagicFixHook.dll not found");
+            return false;
         }
         running.store(true);
         thread = std::thread([this]() { loop(); });
