@@ -98,6 +98,7 @@ struct App {
     bool task_ok = false;
     std::string task_message;
     std::chrono::steady_clock::time_point last_tray_retry{};
+    bool tray_hint_shown = false;
 
     std::mutex log_mutex;
 };
@@ -240,6 +241,26 @@ void add_tray(HWND hwnd) {
     } else {
         log_line("Échec de l'ajout de l'icône de notification");
     }
+}
+
+void show_tray_hint() {
+    if (g_app.tray_hint_shown || !g_app.tray_added) {
+        return;
+    }
+    g_app.tray_hint_shown = true;
+    g_app.nid.uFlags = NIF_INFO;
+    wcsncpy_s(g_app.nid.szInfoTitle, L"SimagicFix", _TRUNCATE);
+    wcsncpy_s(g_app.nid.szInfo,
+              L"SimagicFix continue en arrière-plan. Utilisez Quitter pour "
+              L"fermer complètement.",
+              _TRUNCATE);
+    g_app.nid.dwInfoFlags = NIIF_INFO;
+    if (!Shell_NotifyIconW(NIM_MODIFY, &g_app.nid)) {
+        g_app.tray_added = false;
+    } else {
+        log_line("Notification d'arrière-plan affichée");
+    }
+    g_app.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 }
 
 void remove_tray() {
@@ -787,6 +808,23 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
             if (g_app.task_running) {
                 MessageBoxW(hwnd, L"Une opération est en cours. Patientez quelques instants.",
                             L"SimagicFix", MB_ICONINFORMATION);
+                return 0;
+            }
+            if (g_app.installed) {
+                if (!g_app.tray_added) {
+                    add_tray(hwnd);
+                }
+                if (!g_app.tray_added) {
+                    MessageBoxW(
+                        hwnd,
+                        L"Impossible d'ajouter l'icône de notification. "
+                        L"La fenêtre reste ouverte.",
+                        L"SimagicFix", MB_ICONERROR);
+                    return 0;
+                }
+                ShowWindow(hwnd, SW_HIDE);
+                log_line("Fenêtre masquée dans la zone de notification");
+                show_tray_hint();
                 return 0;
             }
             g_app.quitting = true;
