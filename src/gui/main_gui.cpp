@@ -134,14 +134,16 @@ void stop_services() {
     const bool had_services =
         g_app.hook_service != nullptr || g_app.telemetry != nullptr;
     if (g_app.hook_service) {
+        log_line("Arrêt : service du hook");
         g_app.hook_service->stop();
         g_app.hook_service.reset();
-        log_line("Service du hook arrêté");
+        log_line("Arrêt : service du hook terminé");
     }
     if (g_app.telemetry) {
+        log_line("Arrêt : télémétrie");
         g_app.telemetry->stop();
         g_app.telemetry.reset();
-        log_line("Télémétrie arrêtée");
+        log_line("Arrêt : télémétrie terminée");
     }
     g_app.last_hook_error.clear();
     if (had_services) {
@@ -274,6 +276,20 @@ void remove_tray() {
     }
     g_app.tray_icon = nullptr;
     g_app.tray_icon_owned = false;
+}
+
+void request_exit(HWND hwnd) {
+    if (g_app.quitting) {
+        return;
+    }
+    g_app.quitting = true;
+    remove_tray();
+    log_line("Arrêt demandé : forçage dans 5 s si nécessaire");
+    std::thread([]() {
+        Sleep(5000);
+        ExitProcess(0);
+    }).detach();
+    DestroyWindow(hwnd);
 }
 
 void refresh_status() {
@@ -435,8 +451,7 @@ void finish_task() {
             remove_tray();
             MessageBoxW(g_app.main, L"SimagicFix a été désinstallé.",
                         L"SimagicFix", MB_ICONINFORMATION);
-            g_app.quitting = true;
-            DestroyWindow(g_app.main);
+            request_exit(g_app.main);
         } else {
             if (g_app.installed && !g_app.tray_added) {
                 add_tray(g_app.main);
@@ -591,8 +606,7 @@ void handle_menu(int id) {
             do_uninstall();
             break;
         case IDM_QUIT:
-            g_app.quitting = true;
-            DestroyWindow(g_app.main);
+            request_exit(g_app.main);
             break;
         default:
             break;
@@ -770,16 +784,14 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                     if (g_app.installed) {
                         ShowWindow(hwnd, SW_HIDE);
                     } else {
-                        g_app.quitting = true;
-                        DestroyWindow(hwnd);
+                        request_exit(hwnd);
                     }
                     break;
                 case IDC_LOGS:
                     open_logs();
                     break;
                 case IDC_QUIT:
-                    g_app.quitting = true;
-                    DestroyWindow(hwnd);
+                    request_exit(hwnd);
                     break;
                 case IDC_UNINSTALL:
                     do_uninstall();
@@ -827,15 +839,16 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                 show_tray_hint();
                 return 0;
             }
-            g_app.quitting = true;
-            DestroyWindow(hwnd);
+            request_exit(hwnd);
             return 0;
         case WM_DESTROY:
             KillTimer(hwnd, 1);
             log_line("Arrêt : suppression de l'icône de notification");
             remove_tray();
             if (g_app.task_thread.joinable()) {
+                log_line("Arrêt : attente de la tâche en cours");
                 g_app.task_thread.join();
+                log_line("Arrêt : tâche terminée");
             }
             log_line("Arrêt : interruption des services");
             stop_services();
