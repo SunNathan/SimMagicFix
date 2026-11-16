@@ -1,8 +1,10 @@
 #include "core/mock_shm.h"
 
-#include "core/lmu_sdk.h"
+#include "core/lmu_types.h"
 
 namespace simagicfix {
+
+using namespace lmu;
 
 struct MockShm::Impl {
     HANDLE handle = nullptr;

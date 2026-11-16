@@ -52,8 +52,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Portions of this software are Copyright (c) 2008-2009, Vyacheslav Patkov
 (Hacker Disassembler Engine 32/64 C). The HDE 32/64 C license is the same
-BSD 2-Clause license and disclaimer reproduced above. The complete text is
-available in `third_party/minhook/LICENSE.txt`.
+BSD 2-Clause license and disclaimer reproduced above. The complete upstream
+license text is available in the MinHook repository.
 
 ## Icon
 
@@ -65,15 +65,15 @@ unofficial and not affiliated with Simagic.
 The icon was generated at build time with Pillow (development-only dependency,
 not required at runtime). No font file is redistributed.
 
-## LMU SDK fallback header
+## LMU shared-memory types
 
-`third_party/lmu_sdk/SharedMemoryInterface.hpp` is a clean-room,
-ABI-compatible header written for this project. It does not contain or
-redistribute the official Le Mans Ultimate SDK header. It is used when the
-official SDK is not available (for example in CI).
+The Le Mans Ultimate shared-memory structures used by SimagicFix are declared
+in `src/core/lmu_types.h`. They are an independent, ABI-compatible description
+of the fields the project needs; no official SDK file is redistributed.
 
 ## Le Mans Ultimate SDK
 
-The project includes `SharedMemoryInterface.hpp` / `InternalsPlugin.hpp` from the
-local Le Mans Ultimate installation at build time. These files are not
-redistributed with this project. See the header for Studio 397's terms.
+The official `SharedMemoryInterface.hpp` / `InternalsPlugin.hpp` headers are not
+included or redistributed with this project. They can optionally be used
+locally (with `-DLMU_SDK_DIR=...`) to build the `sdk_check` comparison tool.
+See the header for Studio 397's terms.

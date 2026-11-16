@@ -17,6 +17,9 @@ jobs:
     runs-on: windows-2022
     permissions:
       contents: read
+    env:
+      VCPKG_ROOT: C:\vcpkg
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/vcpkg-cache,readwrite'
 
     steps:
       - name: Checkout
@@ -24,12 +27,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v6
+        with:
+          path: vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
       - name: Configure
         shell: pwsh
         run: |
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
-            -DSIMAGICFIX_BUILD_GUI=ON `
-            -DLMU_SDK_DIR="${{ github.workspace }}/third_party/lmu_sdk"
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DSIMAGICFIX_BUILD_GUI=ON
 
       - name: Build
         shell: pwsh

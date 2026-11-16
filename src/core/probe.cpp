@@ -1,12 +1,14 @@
 #include "core/probe.h"
 
 #include "core/lmu_reader.h"
-#include "core/lmu_sdk.h"
+#include "core/lmu_types.h"
 #include "core/paths.h"
 
 #include <cstddef>
 
 namespace simagicfix {
+
+using namespace lmu;
 
 namespace {
 

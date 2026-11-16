@@ -1,6 +1,6 @@
 #include "core/simpro_hook_shared.h"
 
-#include "MinHook.h"
+#include <MinHook.h>
 
 #include <windows.h>
 

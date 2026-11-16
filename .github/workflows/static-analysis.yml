@@ -24,26 +24,35 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 45
     # cl.exe inherits CL, so /analyze is added without clobbering the default
-    # CMAKE_CXX_FLAGS (/EHsc, /GR, /D_WINDOWS...).
-    # /analyze:external- keeps the vendored headers (third_party) out of the
-    # report; they are already marked external by CMake.
+    # CMAKE_CXX_FLAGS (/EHsc, /GR, /D_WINDOWS...). It is set on the build step
+    # only, so vcpkg can compile dependencies during configure without /analyze.
     env:
-      CL: /analyze /analyze:external-
+      VCPKG_ROOT: C:\vcpkg
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/vcpkg-cache,readwrite'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v6
+        with:
+          path: vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
       - name: Configure
         shell: pwsh
         run: |
-          $root = $PWD.Path.Replace('\', '/')
           cmake -S . -B build-analyze -G "Visual Studio 17 2022" -A x64 `
-            -DSIMAGICFIX_BUILD_GUI=ON `
-            -DLMU_SDK_DIR="$root/third_party/lmu_sdk"
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DSIMAGICFIX_BUILD_GUI=ON
 
       - name: Build with code analysis
         shell: pwsh
+        env:
+          CL: /analyze /analyze:external-
         run: |
           cmake --build build-analyze --config Release 2>&1 |
             Tee-Object -FilePath build-analyze\build.log
@@ -139,7 +148,7 @@ jobs:
             --suppress=unmatchedSuppression \
             --template='{file}:{line}: {severity}: {id}: {message}' \
             --output-file=cppcheck-report.txt \
-            -i third_party -i build -i build-analyze -i build-codeql \
+            -i build -i build-analyze -i build-codeql \
             src || true
 
       - name: Summarize findings
@@ -198,18 +207,28 @@ jobs:
     name: MSVC warnings report
     runs-on: windows-2022
     timeout-minutes: 30
+    env:
+      VCPKG_ROOT: C:\vcpkg
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/vcpkg-cache,readwrite'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v6
+        with:
+          path: vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
       - name: Configure
         shell: pwsh
         run: |
-          $root = $PWD.Path.Replace('\', '/')
           cmake -S . -B build-warnings -G "Visual Studio 17 2022" -A x64 `
-            -DSIMAGICFIX_BUILD_GUI=ON `
-            -DLMU_SDK_DIR="$root/third_party/lmu_sdk"
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DSIMAGICFIX_BUILD_GUI=ON
 
       - name: Build
         shell: pwsh

@@ -1,7 +1,7 @@
 #include "core/state.h"
 
 #include "core/paths.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 
 namespace simagicfix {
 

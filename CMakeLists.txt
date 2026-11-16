@@ -9,35 +9,13 @@ set(CMAKE_C_STANDARD 11)
 option(SIMAGICFIX_BUILD_GUI "Build the Win32 GUI" ON)
 
 # ---------------------------------------------------------------------------
-# LMU SDK (official header shipped with the game)
+# Dependencies (vcpkg manifest mode)
 # ---------------------------------------------------------------------------
-set(LMU_SDK_DIR "" CACHE PATH "Path to Le Mans Ultimate Support/SharedMemoryInterface")
-if(NOT LMU_SDK_DIR)
-  set(_lmu_candidates
-    "$ENV{ProgramFiles}/Steam/steamapps/common/Le Mans Ultimate/Support/SharedMemoryInterface"
-    "C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/Support/SharedMemoryInterface"
-    "C:/Program Files/Steam/steamapps/common/Le Mans Ultimate/Support/SharedMemoryInterface"
-    "D:/SteamLibrary/steamapps/common/Le Mans Ultimate/Support/SharedMemoryInterface"
-    "E:/SteamLibrary/steamapps/common/Le Mans Ultimate/Support/SharedMemoryInterface")
-  foreach(_candidate IN LISTS _lmu_candidates)
-    if(EXISTS "${_candidate}/SharedMemoryInterface.hpp")
-      set(LMU_SDK_DIR "${_candidate}" CACHE PATH "Path to Le Mans Ultimate Support/SharedMemoryInterface" FORCE)
-      break()
-    endif()
-  endforeach()
-endif()
+find_package(nlohmann_json CONFIG REQUIRED)
+find_package(minhook CONFIG REQUIRED)
 
-# Fallback used by CI and machines without Le Mans Ultimate installed.
-if(NOT LMU_SDK_DIR AND EXISTS "${CMAKE_SOURCE_DIR}/third_party/lmu_sdk/SharedMemoryInterface.hpp")
-  set(LMU_SDK_DIR "${CMAKE_SOURCE_DIR}/third_party/lmu_sdk"
-      CACHE PATH "Path to Le Mans Ultimate Support/SharedMemoryInterface" FORCE)
-  message(STATUS "LMU SDK: using clean-room fallback header")
-endif()
-if(NOT LMU_SDK_DIR OR NOT EXISTS "${LMU_SDK_DIR}/SharedMemoryInterface.hpp")
-  message(FATAL_ERROR
-    "LMU SDK not found. Configure with -DLMU_SDK_DIR=\"C:/.../Le Mans Ultimate/Support/SharedMemoryInterface\"")
-endif()
-message(STATUS "LMU SDK: ${LMU_SDK_DIR}")
+# Optional: official LMU SDK header, used only to compare ABI offsets locally.
+set(LMU_SDK_DIR "" CACHE PATH "Optional path to Le Mans Ultimate Support/SharedMemoryInterface")
 
 # ---------------------------------------------------------------------------
 # Core library
@@ -54,9 +32,7 @@ add_library(simagicfix_core STATIC
   src/core/installer.cpp
 )
 
-target_include_directories(simagicfix_core
-  PUBLIC  src
-  PRIVATE ${LMU_SDK_DIR} ${CMAKE_SOURCE_DIR}/third_party)
+target_include_directories(simagicfix_core PUBLIC src)
 
 target_compile_definitions(simagicfix_core PUBLIC
   NOMINMAX
@@ -66,8 +42,9 @@ target_compile_definitions(simagicfix_core PUBLIC
   UNICODE
   _UNICODE)
 
-target_link_libraries(simagicfix_core PUBLIC
-  advapi32 shell32 ole32 uuid)
+target_link_libraries(simagicfix_core
+  PUBLIC advapi32 shell32 ole32 uuid
+  PRIVATE nlohmann_json::nlohmann_json)
 
 set_target_properties(simagicfix_core PROPERTIES
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -96,28 +73,6 @@ endif()
 # ---------------------------------------------------------------------------
 # Hook DLL (injected into SimPro)
 # ---------------------------------------------------------------------------
-add_library(minhook STATIC
-  third_party/minhook/src/hook.c
-  third_party/minhook/src/buffer.c
-  third_party/minhook/src/trampoline.c
-  third_party/minhook/src/hde/hde64.c
-)
-target_include_directories(minhook PUBLIC third_party/minhook/include)
-target_include_directories(minhook PRIVATE
-  third_party/minhook/src
-  third_party/minhook/src/hde
-)
-target_compile_definitions(minhook PRIVATE
-  NOMINMAX
-  WIN32_LEAN_AND_MEAN
-  _WIN32_WINNT=0x0A00
-  _CRT_SECURE_NO_WARNINGS
-  UNICODE
-  _UNICODE)
-target_compile_options(minhook PRIVATE /w)
-set_target_properties(minhook PROPERTIES
-  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-
 add_library(SimagicFixHook SHARED
   src/hook/hook.cpp
 )
@@ -131,9 +86,33 @@ target_compile_definitions(SimagicFixHook PRIVATE
   _UNICODE)
 set_target_properties(SimagicFixHook PROPERTIES
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-target_link_libraries(SimagicFixHook PRIVATE minhook version)
+target_link_libraries(SimagicFixHook PRIVATE minhook::minhook version)
 target_compile_options(SimagicFixHook PRIVATE
   /W4 /permissive- /utf-8 /Zc:__cplusplus)
+
+# ---------------------------------------------------------------------------
+# Optional ABI check against the official LMU SDK header
+# ---------------------------------------------------------------------------
+if(LMU_SDK_DIR)
+  if(NOT EXISTS "${LMU_SDK_DIR}/SharedMemoryInterface.hpp")
+    message(FATAL_ERROR
+      "LMU_SDK_DIR is set but SharedMemoryInterface.hpp was not found in ${LMU_SDK_DIR}")
+  endif()
+  add_executable(sdk_check tools/sdk_check.cpp)
+  target_include_directories(sdk_check PRIVATE ${LMU_SDK_DIR})
+  target_compile_definitions(sdk_check PRIVATE
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN
+    _WIN32_WINNT=0x0A00
+    _CRT_SECURE_NO_WARNINGS
+    UNICODE
+    _UNICODE)
+  set_target_properties(sdk_check PROPERTIES
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  target_compile_options(sdk_check PRIVATE
+    /W4 /permissive- /utf-8 /Zc:__cplusplus
+    "/external:I${LMU_SDK_DIR}" "/external:W0")
+endif()
 
 # ---------------------------------------------------------------------------
 # Warnings
@@ -145,8 +124,6 @@ if(MSVC)
   if(TARGET SimagicFix)
     target_compile_options(SimagicFix PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus)
   endif()
-  target_compile_options(simagicfix_core PRIVATE
-    "/external:I${CMAKE_SOURCE_DIR}/third_party" "/external:W0")
 endif()
 
 install(TARGETS SimagicFixCLI RUNTIME DESTINATION .)

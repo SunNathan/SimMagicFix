@@ -8,11 +8,15 @@ Cette procédure sert à confirmer les valeurs réelles de LMU et à vérifier l
 SimagicFixCLI.exe selftest
 ```
 
-Comparer les tailles/offsets avec ceux du header installé :
+Comparer les tailles/offsets avec le header officiel si Le Mans Ultimate est installé :
 
-`...\Le Mans Ultimate\Support\SharedMemoryInterface\InternalsPlugin.hpp`
+```bat
+cmake --preset vs2022-x64 -DLMU_SDK_DIR="C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/Support/SharedMemoryInterface"
+cmake --build --preset release --target sdk_check
+build\Release\sdk_check.exe
+```
 
-Valeurs de référence sur la build d'octobre 2026 :
+Les valeurs doivent être identiques à celles de `selftest`. Valeurs de référence sur la build d'octobre 2026 :
 
 - `sizeof(TelemInfoV01)` = 1888
 - `offsetof(TelemInfoV01, mTC)` = 750
@@ -107,9 +111,10 @@ Aucun repli vers une écriture externe n'existe : si le hook échoue, le patch r
 
 Si `probe` affiche des valeurs incohérentes ou si `selftest` ne correspond plus :
 
-1. Vérifier le header `Support\SharedMemoryInterface\InternalsPlugin.hpp`.
-2. Comparer les champs avec `src/core/lmu_reader.cpp`.
-3. Recompiler avec le header mis à jour.
+1. Comparer les offsets avec le header `Support\SharedMemoryInterface\InternalsPlugin.hpp` via `sdk_check` si disponible.
+2. Mettre à jour les structs et `static_assert` dans `src/core/lmu_types.h`.
+3. Mettre à jour `src/core/lmu_reader.cpp` si un champ change de place.
+4. Recompiler et rejouer `selftest` + `probe`.
 
 ## 9. En cas de changement de build SimPro
 

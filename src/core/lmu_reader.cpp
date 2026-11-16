@@ -1,8 +1,11 @@
 #include "core/lmu_reader.h"
 
-#include "core/lmu_sdk.h"
+#include "core/lmu_lock.h"
+#include "core/lmu_types.h"
 
 namespace simagicfix {
+
+using namespace lmu;
 
 struct LmuReader::Impl {
     HANDLE map_handle = nullptr;

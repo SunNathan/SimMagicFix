@@ -11,7 +11,7 @@
 #include <iterator>
 #include <regex>
 
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 
 namespace simagicfix {
 

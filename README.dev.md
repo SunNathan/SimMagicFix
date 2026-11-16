@@ -5,17 +5,29 @@ Ce document décrit la compilation, l'architecture interne et les procédures de
 ## 1. Prérequis de compilation
 
 - Windows 10/11 x64.
-- Visual Studio 2022 avec la charge de travail « Développement Desktop en C++ ».
+- Visual Studio 2022 avec la charge de travail « Développement Desktop en C++ » (composant vcpkg inclus).
 - CMake ≥ 3.21.
-- Le Mans Ultimate installé (pour le header SDK officiel), ou le header de secours `third_party/lmu_sdk`.
+- vcpkg (fourni avec Visual Studio, ou installation autonome). Le projet utilise le mode manifest avec le triplet `x64-windows-static`.
 
-Le SDK LMU est détecté automatiquement dans les emplacements Steam habituels. Sinon :
+Les dépendances C++ (MinHook, nlohmann/json) sont déclarées dans `vcpkg.json` et installées automatiquement à la configuration. Aucune installation de Le Mans Ultimate n'est nécessaire pour compiler.
+
+Pour la validation ABI locale uniquement, le header officiel du SDK LMU peut être fourni :
 
 ```bat
 cmake --preset vs2022-x64 -DLMU_SDK_DIR="C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/Support/SharedMemoryInterface"
 ```
 
+Cela ajoute la cible optionnelle `sdk_check`, qui affiche les tailles/offsets du header officiel pour comparaison avec `selftest`.
+
 ## 2. Compilation
+
+Avec `build.bat`, `VCPKG_ROOT` est détecté automatiquement. Pour appeler CMake directement, définir `VCPKG_ROOT` :
+
+```bat
+set VCPKG_ROOT=C:\vcpkg
+```
+
+Puis :
 
 ```bat
 cmake --preset vs2022-x64
@@ -27,6 +39,8 @@ Ou simplement :
 ```bat
 build.bat
 ```
+
+`build.bat` détecte `VCPKG_ROOT`, `VCPKG_INSTALLATION_ROOT`, `C:\vcpkg` puis le vcpkg intégré à Visual Studio.
 
 Sorties :
 
@@ -135,11 +149,13 @@ Commandes locales :
 ```bat
 :: cppcheck
 cppcheck --std=c++20 --enable=warning,performance,portability,style ^
-  --suppress=missingIncludeSystem -i third_party -i build src
+  --suppress=missingIncludeSystem -i build src
 
 :: MSVC /analyze (dans un build séparé)
 set CL=/analyze /analyze:external-
-cmake -S . -B build-analyze -G "Visual Studio 17 2022" -A x64
+cmake -S . -B build-analyze -G "Visual Studio 17 2022" -A x64 ^
+  -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake" ^
+  -DVCPKG_TARGET_TRIPLET=x64-windows-static
 cmake --build build-analyze --config Release
 ```
 
@@ -163,4 +179,11 @@ Le code source est analysé avec zéro finding cppcheck et zéro warning MSVC `/
 
 ## 9. Licence et dépendances
 
-MIT (voir `LICENSE`). Dépendances : MinHook (BSD 2-Clause), `nlohmann/json` (MIT), header SDK LMU non redistribué. Détails dans `THIRD_PARTY_NOTICES.md`.
+MIT (voir `LICENSE`). Dépendances gérées par vcpkg : MinHook (BSD 2-Clause), `nlohmann/json` (MIT). Les types LMU sont définis dans `src/core/lmu_types.h` ; le header officiel du jeu n'est ni requis ni redistribué. Détails dans `THIRD_PARTY_NOTICES.md`.
+
+Pour régénérer les icônes :
+
+```bat
+python -m pip install -r requirements-dev.txt
+python tools/make_icon.py
+```
