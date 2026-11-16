@@ -7,8 +7,8 @@ IDI_APP_ICON  ICON "app.ico"
 IDI_TRAY_ICON ICON "tray.ico"
 
 1 VERSIONINFO
-FILEVERSION     0,4,1,0
-PRODUCTVERSION  0,4,1,0
+FILEVERSION     0,4,2,0
+PRODUCTVERSION  0,4,2,0
 FILEFLAGSMASK   0x3fL
 FILEFLAGS       0x0L
 FILEOS          0x40004L
@@ -21,12 +21,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "SimagicFix (communauté)"
             VALUE "FileDescription",  "SimagicFix - correctif de télémétrie LMU pour SimPro"
-            VALUE "FileVersion",      "0.4.1.0"
+            VALUE "FileVersion",      "0.4.2.0"
             VALUE "InternalName",     "SimagicFix"
             VALUE "LegalCopyright",   "Outil communautaire non officiel - non affilié à Simagic"
             VALUE "OriginalFilename", "SimagicFix.exe"
             VALUE "ProductName",      "SimagicFix"
-            VALUE "ProductVersion",   "0.4.1.0"
+            VALUE "ProductVersion",   "0.4.2.0"
             VALUE "Comments",         "Icône communautaire originale inspirée des couleurs Simagic"
         END
     END
