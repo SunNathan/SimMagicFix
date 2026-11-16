@@ -26,7 +26,7 @@ BOOL WINAPI console_handler(DWORD type) {
 void print_help() {
     std::cout
         << "SimagicFixCLI\n"
-        << "  install [--no-autostart]\n"
+        << "  install [--no-autostart] [--keep-source]\n"
         << "  autostart --enable|--disable|--status\n"
         << "  patch-memory [SECONDS] [--mock]\n"
         << "  probe\n"
@@ -40,12 +40,17 @@ int command_install(const std::vector<std::string>& args) {
     for (const auto& arg : args) {
         if (arg == "--no-autostart") {
             options.auto_start = false;
+        } else if (arg == "--keep-source") {
+            options.keep_source = true;
         }
     }
     const auto report = simagicfix::install(options);
     if (!report.ok) {
         std::cout << "Install failed: " << report.error << "\n";
         return 1;
+    }
+    if (!report.warning.empty()) {
+        std::cout << "Warning: " << report.warning << "\n";
     }
     std::cout << "Installed.\n";
     std::cout << "Auto-start: " << (options.auto_start ? "enabled" : "disabled")

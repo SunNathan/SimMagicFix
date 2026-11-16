@@ -23,9 +23,10 @@ SimagicFix lit les valeurs **TC**, **TC Cut**, **ABS**, **Motor Map**, **SoC** e
 2. Lancer `SimagicFix.exe`.
 3. Cocher éventuellement « Lancer SimagicFix au démarrage de Windows ».
 4. Cliquer sur **Installer SimagicFix**.
-5. L'icône de SimagicFix apparaît dans la zone de notification.
+5. Une fenêtre d'avertissement explique que les fichiers `SimagicFix.exe` et `SimagicFixHook.dll` du dossier de lancement seront supprimés après l'installation. Valider pour continuer.
+6. L'icône de SimagicFix apparaît dans la zone de notification.
 
-L'installation copie l'application dans `%LOCALAPPDATA%\SimagicFix`, crée un raccourci dans le menu Démarrer et, si demandé, active le démarrage automatique.
+L'installation copie l'application dans `%LOCALAPPDATA%\SimagicFix`, crée un raccourci dans le menu Démarrer et, si demandé, active le démarrage automatique. Les fichiers source du dossier de lancement sont ensuite supprimés : la DLL immédiatement, l'exe à la fermeture de l'application. L'application installée et le raccourci restent fonctionnels.
 
 ## Utilisation
 
@@ -84,6 +85,8 @@ Les adresses et offsets sont spécifiques à SimPro 2.1.8. Une mise à jour de S
 
 - Depuis la fenêtre ou le menu de la zone de notification : **Désinstaller**.
 - Ou depuis Windows : Paramètres → Applications → SimagicFix.
+
+Si SimPro Manager est encore lancé, SimagicFix demande de le fermer avant de continuer. Les options sont **fermer SimPro et continuer** ou **annuler**. Si SimPro ne se ferme pas, la désinstallation est annulée avec un message clair.
 
 La désinstallation arrête le hook, retire le démarrage automatique et le raccourci du menu Démarrer.
 

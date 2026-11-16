@@ -6,11 +6,13 @@ namespace simagicfix {
 
 struct InstallOptions {
     bool auto_start = true;
+    bool keep_source = false;
 };
 
 struct InstallReport {
     bool ok = false;
     std::string error;
+    std::string warning;
 };
 
 InstallReport install(const InstallOptions& options);

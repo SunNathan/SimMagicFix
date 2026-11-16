@@ -46,7 +46,7 @@ enum ControlId {
     IDC_MEMORY_PATCH,
 };
 
-enum class TaskKind { None, Install };
+enum class TaskKind { None, Install, Uninstall };
 
 enum MenuId {
     IDM_OPEN = 200,
@@ -80,6 +80,7 @@ struct App {
     bool installed = false;
     bool tray_only = false;
     bool quitting = false;
+    bool keep_source = false;
 
     std::unique_ptr<TelemetryService> telemetry;
     std::unique_ptr<SimProHookService> hook_service;
@@ -125,6 +126,9 @@ void set_font(HWND control, HFONT font) {
 }
 
 void stop_services() {
+    const auto start = std::chrono::steady_clock::now();
+    const bool had_services =
+        g_app.hook_service != nullptr || g_app.telemetry != nullptr;
     if (g_app.hook_service) {
         g_app.hook_service->stop();
         g_app.hook_service.reset();
@@ -136,6 +140,12 @@ void stop_services() {
         log_line("Telemetry stopped");
     }
     g_app.last_hook_error.clear();
+    if (had_services) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - start)
+                                 .count();
+        log_line("Services stopped in " + std::to_string(elapsed) + " ms");
+    }
 }
 
 void start_services() {
@@ -223,7 +233,7 @@ void remove_tray() {
 }
 
 void refresh_status() {
-    if (g_app.main == nullptr) {
+    if (g_app.main == nullptr || g_app.task_running) {
         return;
     }
     const fs::path simpro = simpro_exe_path();
@@ -321,6 +331,7 @@ void run_task(TaskKind kind, std::function<void()> task) {
     g_app.task_kind = kind;
     g_app.task_ok = false;
     g_app.task_message.clear();
+    KillTimer(g_app.main, 1);
     EnableWindow(g_app.install, FALSE);
     EnableWindow(g_app.uninstall_button, FALSE);
     EnableWindow(g_app.quit_button, FALSE);
@@ -368,9 +379,25 @@ void finish_task() {
                         w("Installation echouee : " + g_app.task_message).c_str(),
                         L"SimagicFix", MB_ICONERROR);
         }
+    } else if (g_app.task_kind == TaskKind::Uninstall) {
+        remove_tray();
+        if (g_app.task_ok) {
+            MessageBoxW(g_app.main, L"SimagicFix a ete desinstalle.",
+                        L"SimagicFix", MB_ICONINFORMATION);
+            g_app.quitting = true;
+            DestroyWindow(g_app.main);
+        } else {
+            MessageBoxW(
+                g_app.main,
+                w("Desinstallation echouee : " + g_app.task_message).c_str(),
+                L"SimagicFix", MB_ICONERROR);
+        }
     }
 
     g_app.task_kind = TaskKind::None;
+    if (!g_app.quitting && g_app.main != nullptr) {
+        SetTimer(g_app.main, 1, 1000, nullptr);
+    }
 }
 
 void start_install() {
@@ -380,6 +407,28 @@ void start_install() {
     InstallOptions options;
     options.auto_start =
         SendMessageW(g_app.autostart, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    options.keep_source = g_app.keep_source;
+
+    std::error_code ec;
+    const bool running_installed =
+        fs::equivalent(current_exe_path(), installed_exe_path(), ec);
+    if (!running_installed && !options.keep_source) {
+        const int answer = MessageBoxW(
+            g_app.main,
+            L"Installation de SimagicFix\n\n"
+            L"SimagicFix va etre installe dans :\n"
+            L"%LOCALAPPDATA%\\SimagicFix\n\n"
+            L"Les fichiers SimagicFix.exe et SimagicFixHook.dll presents dans "
+            L"le dossier actuel seront supprimes apres l'installation. "
+            L"L'exe sera supprime a la fermeture de l'application.\n\n"
+            L"L'application continuera de fonctionner depuis son emplacement "
+            L"installe et le raccourci du menu Demarrer.\n\n"
+            L"Continuer ?",
+            L"SimagicFix - installation", MB_OKCANCEL | MB_ICONINFORMATION);
+        if (answer != IDOK) {
+            return;
+        }
+    }
 
     log_line("Install requested");
     run_task(TaskKind::Install, [options]() {
@@ -387,6 +436,9 @@ void start_install() {
         g_app.task_ok = report.ok;
         g_app.task_message = report.ok ? "" : report.error;
         log_line(report.ok ? "Install OK" : "Install failed: " + report.error);
+        if (!report.warning.empty()) {
+            log_line("Install warning: " + report.warning);
+        }
     });
 }
 
@@ -404,22 +456,51 @@ void do_uninstall() {
     if (answer != IDYES) {
         return;
     }
-    stop_services();
-    const bool ok = uninstall();
-    remove_tray();
-    log_line(ok ? "Uninstall completed" : "Uninstall completed with errors");
-    std::error_code ec;
-    const bool running_installed =
-        fs::equivalent(current_exe_path(), installed_exe_path(), ec);
-    if (running_installed) {
-        schedule_delete_self();
+
+    bool close_simpro = false;
+    if (process_running(L"simpro.exe")) {
+        const int simpro = MessageBoxW(
+            g_app.main,
+            L"SimPro Manager est encore lance.\n\n"
+            L"SimagicFix doit fermer SimPro Manager avant de continuer.\n\n"
+            L"OK : fermer SimPro et continuer\n"
+            L"Annuler : annuler la desinstallation",
+            L"SimagicFix", MB_OKCANCEL | MB_ICONWARNING);
+        if (simpro != IDOK) {
+            return;
+        }
+        close_simpro = true;
     }
-    MessageBoxW(g_app.main,
-                L"SimagicFix a ete desinstalle.",
-                L"SimagicFix",
-                ok ? MB_ICONINFORMATION : MB_ICONWARNING);
-    g_app.quitting = true;
-    DestroyWindow(g_app.main);
+
+    log_line("Uninstall requested");
+    run_task(TaskKind::Uninstall, [close_simpro]() {
+        if (close_simpro) {
+            log_line("Uninstall: closing SimPro");
+            if (!close_process(L"simpro.exe", 15000)) {
+                g_app.task_ok = false;
+                g_app.task_message =
+                    "Impossible de fermer SimPro Manager. Fermez-le "
+                    "manuellement puis reessayez.";
+                log_line("Uninstall: cannot close SimPro");
+                return;
+            }
+            log_line("Uninstall: SimPro closed");
+        }
+        log_line("Uninstall: stopping services");
+        stop_services();
+        log_line("Uninstall: services stopped");
+        const bool ok = uninstall();
+        g_app.task_ok = ok;
+        g_app.task_message =
+            ok ? "" : "La desinstallation a rencontre une erreur.";
+        log_line(ok ? "Uninstall completed" : "Uninstall completed with errors");
+        std::error_code ec;
+        const bool running_installed =
+            fs::equivalent(current_exe_path(), installed_exe_path(), ec);
+        if (running_installed) {
+            schedule_delete_self();
+        }
+    });
 }
 
 void toggle_autostart() {
@@ -657,19 +738,19 @@ LRESULT CALLBACK main_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
                             L"SimagicFix", MB_ICONINFORMATION);
                 return 0;
             }
-            if (g_app.installed && !g_app.quitting) {
-                ShowWindow(hwnd, SW_HIDE);
-                return 0;
-            }
+            g_app.quitting = true;
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
             KillTimer(hwnd, 1);
+            log_line("Shutdown: removing tray");
+            remove_tray();
             if (g_app.task_thread.joinable()) {
                 g_app.task_thread.join();
             }
+            log_line("Shutdown: stopping services");
             stop_services();
-            remove_tray();
+            log_line("Shutdown: services stopped");
             if (g_app.small_icon != nullptr) {
                 DestroyIcon(g_app.small_icon);
                 g_app.small_icon = nullptr;
@@ -714,17 +795,30 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
 
     const wchar_t* command_line = GetCommandLineW();
     g_app.tray_only = wcsstr(command_line, L"--tray") != nullptr;
+    g_app.keep_source = wcsstr(command_line, L"--keep-source") != nullptr;
 
     // Single instance first: a second launch must not disturb the running app.
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\SimagicFixSingleton");
     if (mutex != nullptr && GetLastError() == ERROR_ALREADY_EXISTS) {
+        bool activated = false;
         for (int attempt = 0; attempt < 20; ++attempt) {
             HWND existing = FindWindowW(kMainClass, nullptr);
             if (existing != nullptr) {
-                PostMessageW(existing, WM_APP_SHOW, 0, 0);
+                DWORD_PTR result = 0;
+                const LRESULT sent = SendMessageTimeoutW(
+                    existing, WM_APP_SHOW, 0, 0,
+                    SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &result);
+                activated = sent != 0;
                 break;
             }
             Sleep(100);
+        }
+        if (!activated) {
+            MessageBoxW(nullptr,
+                        L"SimagicFix est deja lance mais ne repond pas.\n\n"
+                        L"Fermez-le via le gestionnaire des taches, puis "
+                        L"relancez SimagicFix.",
+                        L"SimagicFix", MB_ICONWARNING);
         }
         CloseHandle(mutex);
         return 0;
