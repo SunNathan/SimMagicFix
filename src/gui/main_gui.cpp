@@ -698,6 +698,20 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
 
     g_app.instance = instance;
 
+    const fs::path hook_dll = hook_dll_path();
+    std::error_code hook_ec;
+    if (!fs::is_regular_file(hook_dll, hook_ec)) {
+        log_line("SimagicFixHook.dll not found: " + path_to_utf8(hook_dll));
+        const std::wstring message =
+            L"SimagicFixHook.dll est introuvable.\n\n"
+            L"Chemin attendu :\n" +
+            hook_dll.wstring() +
+            L"\n\nRéinstallez SimagicFix.";
+        MessageBoxW(nullptr, message.c_str(), L"SimagicFix",
+                    MB_ICONERROR | MB_OK);
+        return 1;
+    }
+
     const wchar_t* command_line = GetCommandLineW();
     g_app.tray_only = wcsstr(command_line, L"--tray") != nullptr;
 

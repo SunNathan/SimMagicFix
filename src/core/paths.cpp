@@ -417,6 +417,10 @@ fs::path current_exe_path() {
 
 fs::path installed_exe_path() { return app_data_dir() / L"SimagicFix.exe"; }
 
+fs::path hook_dll_path() {
+    return current_exe_path().parent_path() / L"SimagicFixHook.dll";
+}
+
 fs::path start_menu_shortcut_path() {
     const fs::path appdata = known_folder(FOLDERID_RoamingAppData);
     if (appdata.empty()) {

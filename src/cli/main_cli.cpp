@@ -75,7 +75,11 @@ int command_patch_memory(const std::vector<std::string>& args) {
 
     simagicfix::SimProHookService service(
         [&telemetry]() { return telemetry.snapshot(); });
-    service.start();
+    if (!service.start()) {
+        std::cerr << "Hook service failed: " << service.last_error() << "\n";
+        telemetry.stop();
+        return 1;
+    }
     std::cout << "Hook service started (SimPro 2.1.8)\n";
 
     for (int i = 0; i < seconds && !g_stop.load(); ++i) {

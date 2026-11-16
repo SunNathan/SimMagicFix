@@ -39,6 +39,7 @@ enum class HookError : LONG {
     TargetNotExecutable = 6,
     InjectionFailed = 7,
     Timeout = 8,
+    DllNotFound = 9,
 };
 
 struct HookSharedValues {
