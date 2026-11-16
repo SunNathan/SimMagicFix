@@ -171,7 +171,7 @@ Le code source est analysé avec zéro finding cppcheck et zéro warning MSVC `/
 
 ## 8. Release
 
-1. Mettre à jour la version dans `CMakeLists.txt` et `src/core/installer.cpp`.
+1. Mettre à jour la version dans `CMakeLists.txt`, `src/core/installer.cpp`, `src/gui/app.rc` et `vcpkg.json`.
 2. Compiler en Release.
 3. Vérifier `cppcheck` et MSVC `/analyze`.
 4. Tester `patch-memory 30 --mock` puis avec SimPro et LMU.

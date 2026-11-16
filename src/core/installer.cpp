@@ -77,7 +77,7 @@ InstallReport install(const InstallOptions& options) {
     AppState state = load_state();
     state.installed = true;
     state.auto_start = options.auto_start;
-    state.version = "0.4.0";
+    state.version = "0.4.1";
     if (state.install_date.empty()) {
         state.install_date = now_string();
     }
