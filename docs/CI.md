@@ -45,9 +45,11 @@ gh run view <run-id> --log
 
 | Outil | Nombre | Détail |
 | --- | --- | --- |
-| CodeQL | 0 | `security-extended`, aucune alerte de sécurité |
+| CodeQL | 4 | 3 × `cpp/path-injection` (haute sévérité) : `src/core/paths.cpp:305`, `src/core/state.cpp:16`, `src/gui/main_gui.cpp:141` ; 1 × `cpp/non-https-url` dans `third_party/httplib.h` (vendored) |
 | MSVC `/analyze` | 3 | `C4456` + `C6246` (`src/core/bridge.cpp:157`, shadowing de `now`), `C28251` (`src/gui/main_gui.cpp:1222`, `wWinMain` sans annotation) |
 | cppcheck | 8 | 7 × `useStlAlgorithm`, 1 × `shadowVariable` (`src/core/bridge.cpp:157`) |
+
+Les `cpp/path-injection` portent sur des chemins construits depuis l'API Win32 (dossiers SimPro, arguments CLI) : à revoir avant de considérer la base comme saine, même si le binaire tourne avec les droits de l'utilisateur.
 
 `third_party/` n'est pas corrigé : ces dépendances sont suivies en amont. Le bruit éventuel y est neutralisé en amont (suite de requêtes, `/analyze:external-`, `-i third_party`).
 
