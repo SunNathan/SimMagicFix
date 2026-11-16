@@ -2,31 +2,32 @@
 
 #include "core/snapshot.h"
 
+#include <memory>
+#include <string>
+
 namespace simagicfix {
 
-class BridgeService {
+// Reads LMU shared memory and publishes the latest telemetry snapshot.
+// No HTTP server or JSON-RPC proxy: the hook only needs the snapshot.
+class TelemetryService {
 public:
     struct Options {
-        int port = 56799;
-        int simpro_port = 56789;
         bool mock = false;
         int poll_ms = 20;
     };
 
-    explicit BridgeService(Options options);
-    ~BridgeService();
+    explicit TelemetryService(Options options);
+    ~TelemetryService();
 
-    BridgeService(const BridgeService&) = delete;
-    BridgeService& operator=(const BridgeService&) = delete;
+    TelemetryService(const TelemetryService&) = delete;
+    TelemetryService& operator=(const TelemetryService&) = delete;
 
     bool start();
     void stop();
     bool running() const;
     bool lmu_available() const;
-
     LmuSnapshot snapshot() const;
     std::string last_error() const;
-    int port() const;
 
 private:
     struct Impl;

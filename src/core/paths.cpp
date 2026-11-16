@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <cwctype>
+#include <iterator>
 #include <regex>
 
 #include "json.hpp"
@@ -51,17 +52,6 @@ fs::path utf8_to_path(const std::string& value) {
 
 namespace {
 
-std::wstring get_env_w(const wchar_t* name) {
-    const DWORD size = GetEnvironmentVariableW(name, nullptr, 0);
-    if (size == 0) {
-        return {};
-    }
-    std::wstring value(size, L'\0');
-    const DWORD written = GetEnvironmentVariableW(name, value.data(), size);
-    value.resize(written);
-    return value;
-}
-
 bool path_is_directory(const fs::path& path) {
     std::error_code ec;
     return fs::is_directory(path, ec);
@@ -78,15 +68,41 @@ std::wstring lower(std::wstring value) {
     return value;
 }
 
+// Base folders come from the shell instead of environment variables so a
+// tampered environment cannot redirect file access.
+fs::path known_folder(REFKNOWNFOLDERID id) {
+    PWSTR known = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(id, 0, nullptr, &known))) {
+        fs::path path(known);
+        CoTaskMemFree(known);
+        return path;
+    }
+    return {};
+}
+
+// Registry and Steam library files are external data. Only accept absolute
+// local paths without parent traversal before using them for file access.
+bool is_safe_local_path(const fs::path& path) {
+    if (path.empty() || !path.is_absolute()) {
+        return false;
+    }
+    const std::wstring root = path.root_name().wstring();
+    if (root.empty() || root.rfind(L"\\\\", 0) == 0) {
+        return false;
+    }
+    return std::none_of(path.begin(), path.end(),
+                        [](const fs::path& part) { return part == L".."; });
+}
+
 std::vector<fs::path> steam_roots() {
     std::vector<fs::path> roots;
-    const std::wstring program_files_x86 = get_env_w(L"ProgramFiles(x86)");
-    const std::wstring program_files = get_env_w(L"ProgramFiles");
+    const fs::path program_files_x86 = known_folder(FOLDERID_ProgramFilesX86);
+    const fs::path program_files = known_folder(FOLDERID_ProgramFiles);
     if (!program_files_x86.empty()) {
-        roots.emplace_back(fs::path(program_files_x86) / L"Steam");
+        roots.push_back(program_files_x86 / L"Steam");
     }
     if (!program_files.empty()) {
-        roots.emplace_back(fs::path(program_files) / L"Steam");
+        roots.push_back(program_files / L"Steam");
     }
     roots.emplace_back(L"C:/Program Files (x86)/Steam");
     roots.emplace_back(L"C:/Program Files/Steam");
@@ -126,7 +142,10 @@ void add_steam_library_paths(std::vector<fs::path>& libraries) {
                     unescaped.push_back(raw[i]);
                 }
             }
-            libraries.emplace_back(utf8_to_wide(unescaped));
+            const fs::path library = utf8_to_wide(unescaped);
+            if (is_safe_local_path(library)) {
+                libraries.push_back(library);
+            }
         }
     }
 }
@@ -190,12 +209,15 @@ fs::path find_simpro_in_registry() {
                 read_registry_string(HKEY_LOCAL_MACHINE, subkey, L"InstallLocation");
             if (!location.empty()) {
                 const fs::path base_path(location);
-                for (const auto& candidate :
-                     {base_path / L"simpro.exe", base_path / L"bin" / L"simpro.exe",
-                      base_path / L"SimPro.exe"}) {
-                    if (path_is_file(candidate)) {
-                        RegCloseKey(root);
-                        return candidate;
+                if (is_safe_local_path(base_path)) {
+                    for (const auto& candidate :
+                         {base_path / L"simpro.exe",
+                          base_path / L"bin" / L"simpro.exe",
+                          base_path / L"SimPro.exe"}) {
+                        if (path_is_file(candidate)) {
+                            RegCloseKey(root);
+                            return candidate;
+                        }
                     }
                 }
             }
@@ -208,7 +230,7 @@ fs::path find_simpro_in_registry() {
                     clean.resize(comma);
                 }
                 const fs::path icon_path(clean);
-                if (path_is_file(icon_path) &&
+                if (is_safe_local_path(icon_path) && path_is_file(icon_path) &&
                     lower(icon_path.filename().wstring()) == L"simpro.exe") {
                     RegCloseKey(root);
                     return icon_path;
@@ -223,15 +245,9 @@ fs::path find_simpro_in_registry() {
 }  // namespace
 
 fs::path local_app_data() {
-    const std::wstring value = get_env_w(L"LOCALAPPDATA");
-    if (!value.empty()) {
-        return fs::path(value);
-    }
-    PWSTR known = nullptr;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &known))) {
-        fs::path path(known);
-        CoTaskMemFree(known);
-        return path;
+    const fs::path known = known_folder(FOLDERID_LocalAppData);
+    if (!known.empty()) {
+        return known;
     }
     return fs::temp_directory_path();
 }
@@ -244,35 +260,33 @@ fs::path simagic_config_dir() { return local_app_data() / L"Simagic" / L"config"
 fs::path simagic_appconfig_path() { return simagic_config_dir() / L"appconfig.json"; }
 
 fs::path simpro_exe_path() {
-    const std::wstring program_files_x86 = get_env_w(L"ProgramFiles(x86)");
-    const std::wstring program_files = get_env_w(L"ProgramFiles");
-    const std::wstring local = get_env_w(L"LOCALAPPDATA");
+    const fs::path program_files_x86 = known_folder(FOLDERID_ProgramFilesX86);
+    const fs::path program_files = known_folder(FOLDERID_ProgramFiles);
+    const fs::path local = known_folder(FOLDERID_LocalAppData);
     std::vector<fs::path> candidates;
     if (!program_files_x86.empty()) {
-        candidates.emplace_back(fs::path(program_files_x86) / L"simpro2" / L"bin" /
-                                L"simpro.exe");
+        candidates.push_back(program_files_x86 / L"simpro2" / L"bin" /
+                             L"simpro.exe");
     }
     if (!program_files.empty()) {
-        candidates.emplace_back(fs::path(program_files) / L"simpro2" / L"bin" /
-                                L"simpro.exe");
+        candidates.push_back(program_files / L"simpro2" / L"bin" / L"simpro.exe");
     }
     if (!local.empty()) {
-        candidates.emplace_back(fs::path(local) / L"Programs" / L"simpro2" / L"bin" /
-                                L"simpro.exe");
+        candidates.push_back(local / L"Programs" / L"simpro2" / L"bin" /
+                             L"simpro.exe");
     }
-    for (const auto& candidate : candidates) {
-        if (path_is_file(candidate)) {
-            return candidate;
-        }
+    const auto found = std::find_if(candidates.begin(), candidates.end(),
+                                    path_is_file);
+    if (found != candidates.end()) {
+        return *found;
     }
     return find_simpro_in_registry();
 }
 
 fs::path lmu_install_path() {
     std::vector<fs::path> libraries;
-    for (const auto& root : steam_roots()) {
-        libraries.push_back(root);
-    }
+    const auto roots = steam_roots();
+    std::copy(roots.begin(), roots.end(), std::back_inserter(libraries));
     add_steam_library_paths(libraries);
     for (const auto& library : libraries) {
         const fs::path candidate =
@@ -404,11 +418,11 @@ fs::path current_exe_path() {
 fs::path installed_exe_path() { return app_data_dir() / L"SimagicFix.exe"; }
 
 fs::path start_menu_shortcut_path() {
-    const std::wstring appdata = get_env_w(L"APPDATA");
+    const fs::path appdata = known_folder(FOLDERID_RoamingAppData);
     if (appdata.empty()) {
         return {};
     }
-    return fs::path(appdata) / L"Microsoft" / L"Windows" / L"Start Menu" / L"Programs" /
+    return appdata / L"Microsoft" / L"Windows" / L"Start Menu" / L"Programs" /
            L"SimagicFix.lnk";
 }
 

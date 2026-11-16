@@ -1,6 +1,6 @@
 # Validation avec Le Mans Ultimate
 
-Cette procédure sert à confirmer les valeurs réelles de LMU et à ajuster le mapping si nécessaire. Elle ne modifie rien dans le jeu.
+Cette procédure sert à confirmer les valeurs réelles de LMU et à vérifier le hook SimPro. Elle ne modifie rien dans le jeu.
 
 ## 1. Vérifier la structure
 
@@ -59,33 +59,42 @@ Dans la voiture, ouvrir le MFD électronique et modifier :
 
 Relancer `probe` après chaque changement. Les valeurs doivent suivre.
 
-## 5. Vérifier le bridge
+## 5. Vérifier le hook
 
-Le bridge tourne si l'application est lancée. Tester :
+1. Lancer **SimPro Manager 2.1.8**.
+2. Lancer **SimagicFix.exe** (installé) et cocher **« Activer le patch memoire SimPro (hook) »**.
+3. La ligne **Hook SimPro** doit afficher `actif`.
+
+Test en ligne de commande :
 
 ```bat
-curl http://127.0.0.1:56799/status
+SimagicFixCLI.exe patch-memory 30
 ```
 
-ou dans un navigateur :
+La sortie doit indiquer `installed=yes`, `error=""`, puis les valeurs LMU courantes.
 
-`http://127.0.0.1:56799/status`
+Test sans LMU ni SimPro :
 
-Le JSON doit indiquer `"lmu_available": true` et les valeurs courantes.
+```bat
+SimagicFixCLI.exe patch-memory 10 --mock
+```
+
+La sortie doit afficher `lmu=Mock Hypercar` et des valeurs qui évoluent.
 
 ## 6. Vérifier le volant
 
 - Ouvrir SimPro Manager.
-- Activer **« Patch memoire SimPro (experimental) »** dans SimagicFix.
-- Choisir **« Hook SimPro (experimental) »** pour le mode déterministe.
+- Activer **« Activer le patch memoire SimPro (hook) »** dans SimagicFix.
 - Vérifier que TC / TC Cut / MAP / SoC / ARB avant / ARB arrière changent quand on agit dans le MFD.
 
 Si le volant affiche 0 :
 
-- Vérifier que le bridge tourne (`/status`).
-- Vérifier que le patch mémoire est actif (statut « Patch memoire : actif (hook) »).
-- Lancer `SimagicFixCLI.exe patch-memory 30 --hook` pour voir les valeurs et les erreurs.
-- Vérifier que SimPro n'a pas été mis à jour entre-temps (les offsets et l'adresse du hook sont spécifiques à 2.1.8).
+- Vérifier que la ligne **Hook SimPro** affiche `actif`.
+- Vérifier que SimPro est bien en version **2.1.8** (les offsets et l'adresse du hook sont spécifiques à cette version).
+- Lancer `SimagicFixCLI.exe patch-memory 30` pour voir `installed` et l'erreur éventuelle.
+- Consulter `%LOCALAPPDATA%\SimagicFix\logs\app.log`.
+
+Aucun repli vers une écriture externe n'existe : si le hook échoue, le patch reste inactif et l'erreur est affichée.
 
 ## 7. Points à confirmer
 
@@ -101,3 +110,11 @@ Si `probe` affiche des valeurs incohérentes ou si `selftest` ne correspond plus
 1. Vérifier le header `Support\SharedMemoryInterface\InternalsPlugin.hpp`.
 2. Comparer les champs avec `src/core/lmu_reader.cpp`.
 3. Recompiler avec le header mis à jour.
+
+## 9. En cas de changement de build SimPro
+
+Le hook dépend de l'adresse de la fonction de copie `game_data` et des offsets du buffer SimPro. Après une mise à jour de SimPro :
+
+1. Vérifier la signature du prologue (`src/hook/hook.cpp`).
+2. Réanalyser le binaire SimPro et mettre à jour les RVA/offsets.
+3. Rejouer `patch-memory 30` avec SimPro lancé.

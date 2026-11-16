@@ -29,4 +29,26 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// Owns the SimPro PID discovery, injection and shared-memory updates.
+class SimProHookService {
+public:
+    using SnapshotProvider = std::function<LmuSnapshot()>;
+
+    explicit SimProHookService(SnapshotProvider provider);
+    ~SimProHookService();
+
+    SimProHookService(const SimProHookService&) = delete;
+    SimProHookService& operator=(const SimProHookService&) = delete;
+
+    bool start();
+    void stop();
+    bool running() const;
+    bool installed() const;
+    std::string last_error() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
 }  // namespace simagicfix

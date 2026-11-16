@@ -1,10 +1,34 @@
 #include "core/simpro_hook.h"
 
+#include "core/paths.h"
+
 #include <cmath>
+#include <cwchar>
 
 namespace simagicfix {
 
 namespace {
+
+DWORD find_simpro_pid() {
+    DWORD pid = 0;
+    EnumWindows(
+        [](HWND hwnd, LPARAM param) -> BOOL {
+            wchar_t title[256] = {};
+            GetWindowTextW(hwnd, title, 256);
+            if (std::wcsstr(title, L"SimPro Manager") == nullptr) {
+                return TRUE;
+            }
+            DWORD thread_pid = 0;
+            GetWindowThreadProcessId(hwnd, &thread_pid);
+            if (thread_pid != 0) {
+                *reinterpret_cast<DWORD*>(param) = thread_pid;
+                return FALSE;
+            }
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&pid));
+    return pid;
+}
 
 bool inject_library(DWORD pid, const fs::path& dll_path) {
     std::error_code ec;
@@ -29,17 +53,20 @@ bool inject_library(DWORD pid, const fs::path& dll_path) {
     if (remote != nullptr) {
         if (WriteProcessMemory(process, remote, path.c_str(), bytes, nullptr)) {
             HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
-            const auto load_library = reinterpret_cast<LPTHREAD_START_ROUTINE>(
-                GetProcAddress(kernel, "LoadLibraryW"));
-            if (load_library != nullptr) {
-                HANDLE thread = CreateRemoteThread(
-                    process, nullptr, 0, load_library, remote, 0, nullptr);
-                if (thread != nullptr) {
-                    WaitForSingleObject(thread, 5000);
-                    DWORD exit_code = 0;
-                    GetExitCodeThread(thread, &exit_code);
-                    injected = exit_code != 0;
-                    CloseHandle(thread);
+            if (kernel != nullptr) {
+                const auto load_library =
+                    reinterpret_cast<LPTHREAD_START_ROUTINE>(
+                        GetProcAddress(kernel, "LoadLibraryW"));
+                if (load_library != nullptr) {
+                    HANDLE thread = CreateRemoteThread(
+                        process, nullptr, 0, load_library, remote, 0, nullptr);
+                    if (thread != nullptr) {
+                        WaitForSingleObject(thread, 5000);
+                        DWORD exit_code = 0;
+                        GetExitCodeThread(thread, &exit_code);
+                        injected = exit_code != 0;
+                        CloseHandle(thread);
+                    }
                 }
             }
         }
@@ -144,7 +171,6 @@ struct SimProHook::Impl {
         view->front_arb = snapshot.front_arb;
         view->rear_arb = snapshot.rear_arb;
         view->last_update_tick = GetTickCount64();
-        InterlockedIncrement(&view->heartbeat);
         InterlockedIncrement(&view->sequence);
     }
 
@@ -224,6 +250,119 @@ std::string SimProHook::last_error_text() const {
             return "Timed out waiting for the SimPro hook";
     }
     return "Unknown hook error";
+}
+
+struct SimProHookService::Impl {
+    SnapshotProvider provider;
+    std::atomic<bool> running{false};
+    std::thread thread;
+    SimProHook hook;
+    fs::path dll_path;
+    DWORD current_pid = 0;
+    bool unsupported_binary = false;
+    std::chrono::steady_clock::time_point next_retry{};
+    mutable std::mutex error_mutex;
+    std::string error;
+
+    explicit Impl(SnapshotProvider value)
+        : provider(std::move(value)),
+          dll_path(current_exe_path().parent_path() / L"SimagicFixHook.dll") {}
+    ~Impl() { stop(); }
+
+    void set_error(const std::string& value) {
+        std::lock_guard<std::mutex> lock(error_mutex);
+        error = value;
+    }
+
+    std::string get_error() const {
+        std::lock_guard<std::mutex> lock(error_mutex);
+        return error;
+    }
+
+    bool start() {
+        if (running.load()) {
+            return true;
+        }
+        running.store(true);
+        thread = std::thread([this]() { loop(); });
+        return true;
+    }
+
+    void stop() {
+        if (!running.exchange(false)) {
+            return;
+        }
+        if (thread.joinable()) {
+            thread.join();
+        }
+        hook.set_active(false);
+        hook.stop();
+        current_pid = 0;
+    }
+
+    bool installed() const { return hook.installed(); }
+
+    void loop() {
+        while (running.load()) {
+            const DWORD pid = find_simpro_pid();
+            if (pid == 0) {
+                if (current_pid != 0) {
+                    hook.set_active(false);
+                    hook.stop();
+                    current_pid = 0;
+                    unsupported_binary = false;
+                }
+                set_error("SimPro not running");
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                continue;
+            }
+
+            if (pid != current_pid) {
+                hook.set_active(false);
+                hook.stop();
+                current_pid = pid;
+                unsupported_binary = false;
+                next_retry = std::chrono::steady_clock::now();
+            }
+
+            if (!hook.installed() && !unsupported_binary) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= next_retry) {
+                    if (hook.start(pid, dll_path)) {
+                        set_error("");
+                    } else {
+                        set_error(hook.last_error_text());
+                        if (hook.last_error() == HookError::VersionMismatch) {
+                            unsupported_binary = true;
+                        }
+                        next_retry = now + std::chrono::seconds(5);
+                    }
+                }
+            }
+
+            if (hook.installed()) {
+                const LmuSnapshot snapshot =
+                    provider ? provider() : LmuSnapshot{};
+                hook.set_active(snapshot.valid);
+                if (snapshot.valid) {
+                    hook.update(snapshot);
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+};
+
+SimProHookService::SimProHookService(SnapshotProvider provider)
+    : impl_(std::make_unique<Impl>(std::move(provider))) {}
+SimProHookService::~SimProHookService() = default;
+
+bool SimProHookService::start() { return impl_->start(); }
+void SimProHookService::stop() { impl_->stop(); }
+bool SimProHookService::running() const { return impl_->running.load(); }
+bool SimProHookService::installed() const { return impl_->installed(); }
+std::string SimProHookService::last_error() const {
+    return impl_->get_error();
 }
 
 }  // namespace simagicfix

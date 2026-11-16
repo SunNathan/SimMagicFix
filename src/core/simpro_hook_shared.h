@@ -48,7 +48,6 @@ struct HookSharedValues {
     volatile LONG hook_installed;
     volatile LONG last_error;
     volatile ULONGLONG last_update_tick;
-    volatile LONG heartbeat;
 
     int engine_map;
     float abs;

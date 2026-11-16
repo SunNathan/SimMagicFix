@@ -80,7 +80,7 @@ bool is_supported_binary(uintptr_t base) {
     return true;
 }
 
-bool is_target_buffer(void* destination) {
+bool is_target_buffer(const void* destination) {
     const auto address = reinterpret_cast<uintptr_t>(destination);
     return address == g_buffer1 || address == g_buffer2 ||
            address == g_buffer3;

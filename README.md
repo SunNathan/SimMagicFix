@@ -2,158 +2,101 @@
 
 ![Icône SimagicFix](resources/icon-preview.png)
 
-Correctif local pour la télémétrie **Le Mans Ultimate** sur **SimPro Manager 2.x** (bases Alpha) avec volant **Simagic FX Pro**.
+Correctif local pour la télémétrie **Le Mans Ultimate** sur **SimPro Manager 2.1.8** avec volant **Simagic FX Pro**.
 
-Le rendu natif du volant SimPro ne lit ni les fichiers `.dash` ni le RPC JSON : il utilise un buffer `game_data` interne. SimagicFix lit les valeurs **TC**, **TC Cut**, **ABS**, **Motor Map**, **SoC** et **ARB avant/arrière** dans `LMU_Data`, puis les écrit directement dans ce buffer mémoire. Aucun fichier de dashboard n'est modifié.
+Le rendu natif du volant SimPro ne lit ni les fichiers `.dash` ni le RPC JSON : il utilise un buffer `game_data` interne. SimagicFix lit les valeurs **TC**, **TC Cut**, **ABS**, **Motor Map**, **SoC** et **ARB avant/arrière** dans la mémoire partagée de LMU, puis les écrit directement dans ce buffer. Aucun fichier de dashboard n'est modifié.
 
-## Pourquoi ce correctif
+## Compatibilité
 
-- LMU expose ces valeurs dans sa mémoire partagée native `LMU_Data` (`TelemInfoV01` : `mTC`, `mTCCut`, `mABS`, `mMotorMap`, `mSoC`, etc.).
-- SimPro Manager 2.1.8 (branche des bases Alpha) lit encore l'ancien plugin rFactor 2, qui ne contient pas ces champs. Les améliorations LMU (SOC/ABS/TC/ARB) sont dans SimPro 3.x, réservé aux bases EVO/Zeus.
-- Le dashboard natif du volant affiche donc des valeurs absentes ou figées.
+| Élément | Version prise en charge |
+| --- | --- |
+| Windows | 10 / 11 x64 |
+| SimPro Manager | **2.1.8** (bases Alpha) |
+| Le Mans Ultimate | 1.3 ou plus récent |
+| Droits administrateur | non requis |
 
-SimagicFix fait le pont entre `LMU_Data` et le buffer `game_data` de SimPro, sans modifier les layouts ni les fichiers SimPro.
+> Le correctif dépend de l'agencement interne de SimPro 2.1.8. Une mise à jour de SimPro peut le rendre inactif jusqu'à adaptation.
 
-## Fonctionnalités
+## Installation
 
-- Bridge local en lecture seule vers `LMU_Data`.
-- Patch mémoire du buffer `game_data` natif de SimPro : TC, TC Cut, ABS, Motor Map, SoC et ARB avant/arrière.
-- Aucun dashboard modifié, aucune sauvegarde de fichier `.dash`.
-- Démarrage automatique avec Windows, **activable/désactivable** à tout moment.
-- Désinstallation propre.
-- Fenêtre **Tester** et mode démo pour vérifier les valeurs lues.
-- Outil de diagnostic en ligne de commande.
+1. Télécharger l'archive de release et la décompresser dans un dossier permanent.
+2. Lancer `SimagicFix.exe`.
+3. Cocher éventuellement « Lancer SimagicFix au démarrage de Windows ».
+4. Cliquer sur **Installer SimagicFix**.
+5. L'icône de SimagicFix apparaît dans la zone de notification.
 
-## Prérequis
-
-- Windows 10/11 x64.
-- SimPro Manager 2.1.8 (base Alpha).
-- Le Mans Ultimate 1.3 ou plus récent (mémoire partagée native).
-- Aucun droit administrateur nécessaire.
-
-## Compilation
-
-Le projet utilise CMake et MSVC 2022.
-
-```bat
-cmake --preset vs2022-x64
-cmake --build --preset release
-```
-
-Ou simplement :
-
-```bat
-build.bat
-```
-
-Le SDK LMU est détecté automatiquement dans les emplacements Steam habituels. Sinon :
-
-```bat
-cmake --preset vs2022-x64 -DLMU_SDK_DIR="C:/Program Files (x86)/Steam/steamapps/common/Le Mans Ultimate/Support/SharedMemoryInterface"
-```
-
-Sorties :
-
-- `build/Release/SimagicFix.exe` : application Win32 (installeur + tray).
-- `build/Release/SimagicFixCLI.exe` : diagnostics.
+L'installation copie l'application dans `%LOCALAPPDATA%\SimagicFix`, crée un raccourci dans le menu Démarrer et, si demandé, active le démarrage automatique.
 
 ## Utilisation
 
-1. Lancer `SimagicFix.exe`.
-2. Cocher ou décocher « Lancer SimagicFix au démarrage de Windows ».
-3. Cliquer sur **Installer SimagicFix**.
-4. Le bridge démarre et l'icône apparaît dans la zone de notification.
-5. Cocher **« Patch memoire SimPro (experimental) »** pour activer le patch du volant.
+1. Lancer **SimPro Manager**, puis **Le Mans Ultimate** et entrer en piste.
+2. Ouvrir SimagicFix (double-clic sur l'icône de la zone de notification).
+3. Cocher **« Activer le patch memoire SimPro (hook) »**.
+4. La ligne **Hook SimPro** indique :
+   - `actif` : le volant reçoit les valeurs LMU ;
+   - `en attente` : SimPro n'est pas encore lancé ou la session n'est pas ouverte ;
+   - `desactive` : le patch est décoché.
 
-Ensuite :
+Les valeurs du volant suivent alors le MFD de la voiture : TC, TC Cut, ABS, Motor Map, SoC et ARB avant/arrière.
 
-- **Patch memoire SimPro** : case à cocher dans la fenêtre ; l'état actif / en attente / arrêté est affiché au-dessus.
-- **Tester** : affiche TC / TC Cut / ABS / MAP / SoC / ARB avant / ARB arrière en direct (ou en mode démo).
+### Menu de la zone de notification
+
+- **Ouvrir SimagicFix** : affiche la fenêtre.
+- **Démarrage automatique** : active ou désactive le lancement avec Windows.
 - **Ouvrir les logs** : ouvre `%LOCALAPPDATA%\SimagicFix\logs`.
-- **Désinstaller** : arrête le bridge et le patch, retire l'auto-démarrage et le raccourci.
-- **Démarrage automatique** : case à cocher dans la fenêtre ou entrée du menu tray.
+- **Désinstaller** : arrête le hook, retire l'auto-démarrage, le raccourci et les fichiers installés.
+- **Quitter** : ferme l'application.
 
-L'état est mémorisé dans `state.json` et retrouvé au prochain lancement.
+L'état (installation, patch, auto-démarrage) est mémorisé dans `state.json` et restauré au lancement suivant.
 
-Si l'auto-démarrage est désactivé, le correctif n'est actif que lorsque l'application est lancée (menu Démarrer ou raccourci).
+## Sécurité
 
-## Patch mémoire SimPro (expérimental)
-
-SimPro rend le dashboard du volant nativement. Pour que TC, TC Cut, ABS, Motor Map, SoC et ARB avant/arrière apparaissent sur le volant, SimagicFix écrit ces valeurs directement dans le buffer `game_data` du processus SimPro.
-
-- Activer la case **« Patch memoire SimPro (experimental) »** dans la fenêtre principale.
-- Choisir le mode :
-  - **Faible performance** (par défaut) : un seul thread d’écriture externe, bridge à 20 ms, environ 1 cœur CPU.
-  - **Hook SimPro** (expérimental) : injection de `SimagicFixHook.dll` dans SimPro, hook de la fonction de copie `game_data`, bridge à 2 ms, CPU très faible.
-- Le patch démarre avec le bridge et s'arrête avec lui.
-- En mode Hook, la DLL est injectée uniquement dans **SimPro**, jamais dans LMU.
-- Si l’injection ou le hook échoue, SimagicFix revient automatiquement au mode faible performance.
-- Il ne modifie aucun fichier SimPro et ne touche pas au processus du jeu.
-- Les offsets et l’adresse du hook sont spécifiques à SimPro 2.1.8 ; une mise à jour de SimPro peut les invalider.
-
-Diagnostic :
-
-```bat
-SimagicFixCLI.exe patch-memory 30
-SimagicFixCLI.exe patch-memory 30 --hook
-```
-
-## Outils de diagnostic
-
-```bat
-SimagicFixCLI.exe selftest
-SimagicFixCLI.exe probe
-SimagicFixCLI.exe mock-shm 30
-SimagicFixCLI.exe patch-memory 30
-SimagicFixCLI.exe patch-memory 30 --hook
-SimagicFixCLI.exe run --mock
-```
-
-- `selftest` : tailles et offsets des structures LMU.
-- `probe` : valeurs LMU en direct.
-- `mock-shm` : crée un faux `LMU_Data` avec des valeurs connues (TC=5, ABS=3, MAP=7, SoC=64) pour valider la lecture sans LMU.
-- `patch-memory` : lance le bridge et le patch mémoire pendant N secondes, puis affiche l'état.
-- `run --mock` : bridge avec valeurs simulées.
-
-## Icône
-
-L'icône de l'application est une création communautaire : un “S” blanc italique sur un cercle rouge, inspiré des couleurs de Simagic. **Aucun logo officiel Simagic n'est embarqué dans le projet.** Simagic est une marque de Simagic ; ce projet est non officiel et n'est pas affilié à Simagic.
-
-L'icône est générée par `tools/make_icon.py` (Pillow, uniquement au build) et versionnée dans `src/gui/app.ico` / `src/gui/tray.ico`.
-
-## Sécurité et anti-triche
-
-- Lecture **read-only** de la mémoire partagée officielle de LMU.
-- Aucune écriture dans le processus du jeu, aucun fichier LMU modifié.
-- Le patch mémoire écrit uniquement dans le processus **SimPro** (buffer `game_data`), jamais dans LMU.
-- Le mode faible performance n’injecte rien et n’installe aucun hook.
-- Le mode Hook injecte `SimagicFixHook.dll` dans **SimPro uniquement**, jamais dans LMU.
+- Lecture **en lecture seule** de la mémoire partagée officielle de LMU.
+- Aucune écriture dans le processus du jeu et aucun fichier LMU modifié.
+- Le patch écrit uniquement dans le processus **SimPro**, via une DLL injectée dans SimPro uniquement.
 - Aucun hook dans le processus du jeu.
 - Aucun fichier SimPro n'est modifié.
 
-## Limites
+## Dépannage
 
-- Le patch mémoire est spécifique à SimPro 2.1.8 ; il peut cesser de fonctionner après une mise à jour de SimPro.
-- Le mode Hook dépend de l’adresse de la fonction de copie `game_data` de SimPro 2.1.8 ; une mise à jour de SimPro peut l’invalider.
-- L’injection de DLL peut être signalée par l’antivirus ou SmartScreen.
-- Le mode faible performance utilise environ un cœur CPU pendant une session LMU active ; le mode Hook est beaucoup plus léger.
-- Une mise à jour LMU peut modifier la structure de `LMU_Data` : `selftest`/`probe` permettent de le détecter ; recompiler avec le header SDK mis à jour.
-- Le correctif ne fonctionne que si l'application (le bridge) est lancée.
-- L'exécutable n'est pas signé : Windows SmartScreen peut afficher un avertissement.
+### Le statut reste « en attente »
+
+- Vérifier que SimPro Manager 2.1.8 est lancé.
+- Vérifier que la version de SimPro est bien **2.1.8** (une version plus récente n'est pas prise en charge).
+- Consulter les logs : **Ouvrir les logs**, puis `app.log`.
+
+### Le volant affiche encore des valeurs figées
+
+- Vérifier que la case **« Activer le patch memoire SimPro (hook) »** est cochée.
+- Vérifier que LMU est en session (pas dans les menus) et que la voiture est active.
+- Certaines voitures n'ont pas d'ABS ou d'hybride : les valeurs correspondantes peuvent rester à 0, c'est normal.
+- Redémarrer SimPro puis SimagicFix.
+
+### Windows SmartScreen ou l'antivirus bloque l'application
+
+L'exécutable n'est pas signé et l'injection de DLL peut être signalée. Autoriser explicitement `SimagicFix.exe` et `SimagicFixHook.dll`, ou compiler le projet soi-même.
+
+### Le hook ne s'installe plus après une mise à jour
+
+Les adresses et offsets sont spécifiques à SimPro 2.1.8. Une mise à jour de SimPro nécessite une nouvelle analyse et une nouvelle version de SimagicFix.
+
+## Désinstallation
+
+- Depuis la fenêtre ou le menu de la zone de notification : **Désinstaller**.
+- Ou depuis Windows : Paramètres → Applications → SimagicFix.
+
+La désinstallation arrête le hook, retire le démarrage automatique et le raccourci du menu Démarrer.
+
+## Icône
+
+L'icône de l'application est une création communautaire : un « S » blanc italique sur un cercle rouge, inspiré des couleurs de Simagic. **Aucun logo officiel Simagic n'est embarqué.** Simagic est une marque de Simagic ; ce projet est non officiel et n'est pas affilié à Simagic.
 
 ## Licence
 
-MIT. Voir `LICENSE`. L'utilisation commerciale est autorisée par la licence MIT.
+MIT. Voir `LICENSE`.
 
-## Architecture
+Les dépendances et leurs licences sont détaillées dans `THIRD_PARTY_NOTICES.md`.
 
-- C++20, CMake, Win32 natif.
-- `cpp-httplib` (serveur/client HTTP local).
-- `nlohmann/json`.
-- Header SDK officiel LMU inclus depuis l'installation du jeu (non redistribué).
-- `simagicfix_core` : lecteur LMU, bridge, patch mémoire, hook, installeur.
-- `SimagicFix.exe` : interface Win32.
-- `SimagicFixCLI.exe` : diagnostics.
-- `SimagicFixHook.dll` : DLL injectée dans SimPro (mode Hook), basée sur MinHook.
+---
 
-Voir `THIRD_PARTY_NOTICES.md` pour les licences des dépendances.
+Documentation développeur : [`README.dev.md`](README.dev.md).

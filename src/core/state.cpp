@@ -19,8 +19,6 @@ AppState load_state() {
         state.installed = json.value("installed", false);
         state.auto_start = json.value("auto_start", false);
         state.memory_patch = json.value("memory_patch", false);
-        state.memory_patch_mode = json.value("memory_patch_mode", 0);
-        state.bridge_port = json.value("bridge_port", 56799);
         state.version = json.value("version", "");
         state.install_date = json.value("install_date", "");
     } catch (...) {
@@ -36,8 +34,6 @@ bool save_state(const AppState& state) {
     json["installed"] = state.installed;
     json["auto_start"] = state.auto_start;
     json["memory_patch"] = state.memory_patch;
-    json["memory_patch_mode"] = state.memory_patch_mode;
-    json["bridge_port"] = state.bridge_port;
     json["version"] = state.version;
     json["install_date"] = state.install_date;
     const fs::path path = state_path();

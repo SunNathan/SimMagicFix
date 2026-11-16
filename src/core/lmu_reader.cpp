@@ -9,7 +9,6 @@ struct LmuReader::Impl {
     const SharedMemoryLayout* view = nullptr;
     std::optional<SharedMemoryLock> lock;
     std::optional<SharedMemoryUpdateWaiter> waiter;
-    std::unique_ptr<SharedMemoryTelemetryData> telemetry;
 
     ~Impl() { close(); }
 
@@ -24,7 +23,6 @@ struct LmuReader::Impl {
             CloseHandle(map_handle);
             map_handle = nullptr;
         }
-        telemetry.reset();
     }
 
     bool open() {
@@ -41,7 +39,6 @@ struct LmuReader::Impl {
         }
         lock = SharedMemoryLock::MakeSharedMemoryLock();
         waiter = SharedMemoryUpdateWaiter::MakeSharedMemoryUpdateWaiter();
-        telemetry = std::make_unique<SharedMemoryTelemetryData>();
         return true;
     }
 };
@@ -74,24 +71,30 @@ bool LmuReader::read(LmuSnapshot& snapshot) {
             return false;
         }
     }
-    std::memcpy(impl_->telemetry.get(), &impl_->view->data.telemetry,
-                sizeof(SharedMemoryTelemetryData));
+
+    const SharedMemoryTelemetryData& telemetry = impl_->view->data.telemetry;
+    const bool valid = telemetry.playerHasVehicle &&
+                       telemetry.activeVehicles != 0 &&
+                       telemetry.playerVehicleIdx < 104 &&
+                       telemetry.activeVehicles <= 104;
+    const uint8_t active_vehicles = telemetry.activeVehicles;
+    const uint8_t player_index = telemetry.playerVehicleIdx;
+    TelemInfoV01 info{};
+    if (valid) {
+        std::memcpy(&info, &telemetry.telemInfo[telemetry.playerVehicleIdx],
+                    sizeof(info));
+    }
     if (locked) {
         impl_->lock->Unlock();
     }
-
-    const SharedMemoryTelemetryData& telemetry = *impl_->telemetry;
-    if (!telemetry.playerHasVehicle || telemetry.activeVehicles == 0 ||
-        telemetry.playerVehicleIdx >= 104 || telemetry.activeVehicles > 104) {
+    if (!valid) {
         return false;
     }
 
-    const TelemInfoV01& info = telemetry.telemInfo[telemetry.playerVehicleIdx];
-
     snapshot.valid = true;
     snapshot.player_has_vehicle = true;
-    snapshot.active_vehicles = telemetry.activeVehicles;
-    snapshot.player_index = telemetry.playerVehicleIdx;
+    snapshot.active_vehicles = active_vehicles;
+    snapshot.player_index = player_index;
 
     size_t name_length = 0;
     while (name_length < sizeof(info.mVehicleName) &&
