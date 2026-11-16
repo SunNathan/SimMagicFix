@@ -50,7 +50,7 @@ struct MockShm::Impl {
         telemetry.playerHasVehicle = true;
 
         TelemInfoV01& info = telemetry.telemInfo[0];
-        strncpy_s(info.mVehicleName, sizeof(info.mVehicleName), "Mock Hypercar",
+        strncpy_s(info.mVehicleName, sizeof(info.mVehicleName), "Voiture test",
                   _TRUNCATE);
         info.mVehicleClass = IP_VehicleClass::Hypercar;
         info.mElapsedTime = 0.0;
@@ -116,18 +116,19 @@ void MockShm::update() { impl_->update(); }
 
 void MockShm::run(int seconds) {
     if (!impl_->create()) {
-        std::cerr << "Cannot create LMU_Data mock mapping. Is LMU already running?\n";
+        std::cerr << "Impossible de créer le mapping LMU_Data simulé. "
+                     "LMU est-il déjà lancé ?\n";
         return;
     }
-    std::cout << "Mock LMU_Data created. Known values: TC=5, TC Cut=3, ABS=4, "
-                 "MAP=7, SoC=64%.\n";
+    std::cout << "LMU_Data simulé créé. Valeurs connues : TC=5, TC Cut=3, ABS=4, "
+                 "MAP=7, SoC=64 %.\n";
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::seconds(std::max(1, seconds));
     while (std::chrono::steady_clock::now() < deadline) {
         impl_->update();
         Sleep(200);
     }
-    std::cout << "Mock LMU_Data closed.\n";
+    std::cout << "LMU_Data simulé fermé.\n";
 }
 
 }  // namespace simagicfix

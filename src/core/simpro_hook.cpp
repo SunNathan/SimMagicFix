@@ -267,25 +267,25 @@ std::string SimProHook::last_error_text() const {
         case HookError::None:
             return {};
         case HookError::VersionMismatch:
-            return "SimPro binary is not the supported 2.1.8 build";
+            return "La version de SimPro n'est pas la 2.1.8 prise en charge";
         case HookError::SharedMemoryUnavailable:
-            return "Hook shared memory unavailable";
+            return "Mémoire partagée du hook indisponible";
         case HookError::MinHookInitFailed:
-            return "MinHook initialization failed";
+            return "Échec de l'initialisation de MinHook";
         case HookError::CreateHookFailed:
-            return "Cannot create the SimPro hook";
+            return "Impossible de créer le hook SimPro";
         case HookError::EnableHookFailed:
-            return "Cannot enable the SimPro hook";
+            return "Impossible d'activer le hook SimPro";
         case HookError::TargetNotExecutable:
-            return "SimPro hook target is not executable";
+            return "La cible du hook SimPro n'est pas exécutable";
         case HookError::InjectionFailed:
-            return "Cannot inject SimagicFixHook.dll into SimPro";
+            return "Impossible d'injecter SimagicFixHook.dll dans SimPro";
         case HookError::Timeout:
-            return "Timed out waiting for the SimPro hook";
+            return "Délai d'attente du hook SimPro dépassé";
         case HookError::DllNotFound:
-            return "SimagicFixHook.dll not found";
+            return "SimagicFixHook.dll introuvable";
     }
-    return "Unknown hook error";
+    return "Erreur de hook inconnue";
 }
 
 struct SimProHookService::Impl {
@@ -320,7 +320,7 @@ struct SimProHookService::Impl {
         }
         std::error_code ec;
         if (!fs::is_regular_file(dll_path, ec)) {
-            set_error("SimagicFixHook.dll not found");
+            set_error("SimagicFixHook.dll introuvable");
             return false;
         }
         running.store(true);
@@ -368,7 +368,7 @@ struct SimProHookService::Impl {
                     current_pid = 0;
                     unsupported_binary = false;
                 }
-                set_error("SimPro not running");
+                set_error("SimPro n'est pas lancé");
                 if (!wait_for(std::chrono::seconds(2))) {
                     break;
                 }

@@ -44,7 +44,7 @@ Les valeurs du volant suivent alors le MFD de la voiture : TC, TC Cut, ABS, Moto
 
 - **Ouvrir SimagicFix** : affiche la fenêtre.
 - **Démarrage automatique** : active ou désactive le lancement avec Windows.
-- **Ouvrir les logs** : ouvre `%LOCALAPPDATA%\SimagicFix\logs`.
+- **Ouvrir les journaux** : ouvre `%LOCALAPPDATA%\SimagicFix\logs`.
 - **Désinstaller** : arrête le hook, retire l'auto-démarrage, le raccourci et les fichiers installés.
 - **Quitter** : ferme l'application.
 
@@ -64,7 +64,7 @@ L'état (installation, patch, auto-démarrage) est mémorisé dans `state.json` 
 
 - Vérifier que SimPro Manager 2.1.8 est lancé.
 - Vérifier que la version de SimPro est bien **2.1.8** (une version plus récente n'est pas prise en charge).
-- Consulter les logs : **Ouvrir les logs**, puis `app.log`.
+- Consulter les journaux : **Ouvrir les journaux**, puis `app.log`.
 
 ### Le volant affiche encore des valeurs figées
 

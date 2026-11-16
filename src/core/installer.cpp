@@ -109,8 +109,8 @@ std::string cleanup_source_files(const fs::path& source_exe,
         return "Impossible de programmer la suppression des fichiers source.";
     }
     if (!dll_removed) {
-        return "La DLL source n'a pas pu etre supprimee immediatement ; "
-               "elle sera supprimee apres fermeture de l'application.";
+        return "La DLL source n'a pas pu être supprimée immédiatement ; "
+               "elle sera supprimée après fermeture de l'application.";
     }
     return {};
 }
@@ -148,7 +148,7 @@ bool install_self(const fs::path& target) {
 InstallReport install(const InstallOptions& options) {
     InstallReport report;
     if (!ensure_directories()) {
-        report.error = "Cannot create application directories";
+        report.error = "Impossible de créer les dossiers de l'application";
         return report;
     }
 
@@ -161,7 +161,7 @@ InstallReport install(const InstallOptions& options) {
             : source_exe;
 
     if (!install_self(installed_exe_path())) {
-        report.error = "Cannot install SimagicFix files";
+        report.error = "Impossible d'installer les fichiers de SimagicFix";
         return report;
     }
 

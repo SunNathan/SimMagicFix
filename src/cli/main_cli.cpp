@@ -25,13 +25,13 @@ BOOL WINAPI console_handler(DWORD type) {
 
 void print_help() {
     std::cout
-        << "SimagicFixCLI\n"
-        << "  install [--no-autostart] [--keep-source]\n"
-        << "  autostart --enable|--disable|--status\n"
-        << "  patch-memory [SECONDS] [--mock]\n"
-        << "  probe\n"
-        << "  selftest\n"
-        << "  mock-shm [SECONDS]\n";
+        << "SimagicFixCLI - outils de diagnostic\n"
+        << "  install [--no-autostart] [--keep-source]   Installer SimagicFix\n"
+        << "  autostart --enable|--disable|--status      Gérer le démarrage automatique\n"
+        << "  patch-memory [SECONDES] [--mock]           Tester le hook SimPro\n"
+        << "  probe                                      Lire la télémétrie LMU\n"
+        << "  selftest                                   Vérifier les structures LMU\n"
+        << "  mock-shm [SECONDES]                        Créer une télémétrie simulée\n";
 }
 
 int command_install(const std::vector<std::string>& args) {
@@ -46,15 +46,15 @@ int command_install(const std::vector<std::string>& args) {
     }
     const auto report = simagicfix::install(options);
     if (!report.ok) {
-        std::cout << "Install failed: " << report.error << "\n";
+        std::cout << "Échec de l'installation : " << report.error << "\n";
         return 1;
     }
     if (!report.warning.empty()) {
-        std::cout << "Warning: " << report.warning << "\n";
+        std::cout << "Avertissement : " << report.warning << "\n";
     }
-    std::cout << "Installed.\n";
-    std::cout << "Auto-start: " << (options.auto_start ? "enabled" : "disabled")
-              << "\n";
+    std::cout << "Installé.\n";
+    std::cout << "Démarrage automatique : "
+              << (options.auto_start ? "activé" : "désactivé") << "\n";
     return 0;
 }
 
@@ -81,18 +81,18 @@ int command_patch_memory(const std::vector<std::string>& args) {
     simagicfix::SimProHookService service(
         [&telemetry]() { return telemetry.snapshot(); });
     if (!service.start()) {
-        std::cerr << "Hook service failed: " << service.last_error() << "\n";
+        std::cerr << "Échec du service du hook : " << service.last_error() << "\n";
         telemetry.stop();
         return 1;
     }
-    std::cout << "Hook service started (SimPro 2.1.8)\n";
+    std::cout << "Service du hook démarré (SimPro 2.1.8)\n";
 
     for (int i = 0; i < seconds && !g_stop.load(); ++i) {
         Sleep(1000);
         const auto snapshot = telemetry.snapshot();
         std::cout << "t=" << (i + 1)
-                  << " installed=" << (service.installed() ? "yes" : "no")
-                  << " error=\"" << service.last_error() << "\""
+                  << " installé=" << (service.installed() ? "oui" : "non")
+                  << " erreur=\"" << service.last_error() << "\""
                   << " lmu=" << (snapshot.valid ? snapshot.vehicle_name : "-")
                   << " tc=" << snapshot.tc << "/" << snapshot.tc_max
                   << " abs=" << snapshot.abs << "/" << snapshot.abs_max
@@ -151,7 +151,7 @@ int main(int argc, char** argv) {
     if (command == "autostart") {
         if (args.empty() || args[0] == "--status") {
             std::cout
-                << (simagicfix::is_autostart_enabled() ? "enabled" : "disabled")
+                << (simagicfix::is_autostart_enabled() ? "activé" : "désactivé")
                 << "\n";
             return 0;
         }

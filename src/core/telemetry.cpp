@@ -63,7 +63,7 @@ struct TelemetryService::Impl {
         s.player_has_vehicle = true;
         s.active_vehicles = 1;
         s.player_index = 0;
-        s.vehicle_name = "Mock Hypercar";
+        s.vehicle_name = "Voiture test";
         s.vehicle_class = 0;
         const auto now = std::chrono::steady_clock::now().time_since_epoch();
         const double seconds = std::chrono::duration<double>(now).count();
