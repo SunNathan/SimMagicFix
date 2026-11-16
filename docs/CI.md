@@ -37,6 +37,7 @@ gh run view <run-id> --log
 
 - `/analyze` est injecté via la variable d'environnement `CL`, pas via `CMAKE_CXX_FLAGS` : les flags par défaut de CMake (`/EHsc`, `/GR`, `/D_WINDOWS`…) restent intacts.
 - `/analyze:external-` exclut `third_party/` de l'analyse ; ces dossiers sont déjà marqués `external` par `CMakeLists.txt`.
+- CodeQL est limité à `src/` par `.github/codeql/codeql-config.yml` : sans ce filtre, les headers vendored (`httplib.h`, `json.hpp`) génèrent plus de 150 remarques de style qui noient les vrais résultats.
 - MSVC n'écrit aucun log SARIF exploitable quand on passe par MSBuild (`/analyze:log` et `:autolog:ext:sarif` restent sans effet). Les résultats sont donc extraits du log de compilation et publiés en annotations. Le SARIF reste couvert par CodeQL.
 - Les warnings `/W4` proviennent des options déjà définies dans `CMakeLists.txt` ; le job dédié les compte sans `/analyze`, pour garder une baseline fidèle au build réel.
 
@@ -44,9 +45,11 @@ gh run view <run-id> --log
 
 | Outil | Nombre | Détail |
 | --- | --- | --- |
-| CodeQL | 0 | 180 règles `security-and-quality` appliquées |
+| CodeQL | 11 | Aucune sévérité sécurité ; remarques de qualité sur `src/` (`cpp/loop-variable-changed`, `cpp/poorly-documented-function`…) |
 | MSVC `/analyze` | 3 | `C4456` + `C6246` (`src/core/bridge.cpp:157`, shadowing de `now`), `C28251` (`src/gui/main_gui.cpp:1222`, `wWinMain` sans annotation) |
 | cppcheck | 8 | 7 × `useStlAlgorithm`, 1 × `shadowVariable` (`src/core/bridge.cpp:157`) |
+
+`third_party/` est exclu des trois outils : ces dépendances sont suivies en amont et ne doivent pas polluer le rapport.
 
 ## 5. Passer en mode bloquant
 

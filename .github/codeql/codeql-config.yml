@@ -1,0 +1,9 @@
+name: SimagicFix CodeQL configuration
+
+# Only analyse first-party sources. Vendored headers (httplib, nlohmann/json)
+# and the clean-room LMU SDK header would otherwise dominate the report with
+# hundreds of third-party style notes.
+paths:
+  - src
+paths-ignore:
+  - third_party
